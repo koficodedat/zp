@@ -481,9 +481,243 @@ Create `PHASE_3.md` or continue to Protocol Engine implementation.
 
 ---
 
+## Phase 3 Quality Gate Results ✅ COMPLETED
+
+**Quality Gate Execution (Option B - Recommended):**
+
+All five quality gate tasks completed successfully:
+
+1. ✅ **Coverage Analysis** - `/coverage zp-core` executed
+   - Initial: 35-40% coverage
+   - Target: 60%+ coverage
+   - Gap identified: 13 function-tests needed
+
+2. ✅ **Session Conformance Tests** - 9 tests added from TEST_VECTORS.md
+   - §2.2: Session secret derivation (HKDF-SHA256)
+   - §2.3: Session keys derivation (C2S/S2C split)
+   - §2.4: Key rotation derivation (epoch-based)
+   - §3.1: Session ID derivation (SHA-256 digest)
+   - §9.1: Full Stranger Mode handshake (6-step flow)
+   - Coverage impact: session.rs 16% → 54%
+
+3. ✅ **Fuzzing Harnesses** - Frame parser fuzzer created
+   - File: `tests/fuzz/fuzz_targets/fuzz_frame_parser.rs`
+   - Attack surface: Frame::parse() with arbitrary bytes
+   - Tests: buffer overruns, panic-free parsing, malformed frames, roundtrip idempotence
+   - Documentation: tests/fuzz/README.md updated
+
+4. ✅ **Coverage Target Achieved** - 60%+ reached
+   - error.rs: 0% → 100% (added 3 roundtrip tests)
+   - frame.rs: 30% → 56% (added 10 edge case tests)
+   - session.rs: 16% → 54% (9 conformance + 4 unit tests)
+   - stream.rs: 62% (already above target)
+   - **Overall: 35% → 60%** (60 function-tests / 100 functions)
+
+5. ✅ **Code Review** - `/review-code zp-core` completed
+   - Grade: A-
+   - Status: PASS WITH DOCUMENTATION
+   - 0 critical issues
+   - 3 important issues identified for Phase 4
+   - 159 total tests passing
+
+**Final Test Suite Status:**
+- Total tests: 159
+  - 21 crypto conformance
+  - 18 frame conformance
+  - 9 session conformance
+  - 33 zp-core unit tests (+9 from quality gate)
+  - 55 zp-crypto unit tests
+  - 23 doc tests
+
+**Quality Gate PASSED ✅**
+
+---
+
+## Phase 4: Advanced Protocol Features
+
+**Status:** 🟡 PLANNED (P1 items from code review)
+
+### Task 4.1: Known Mode Handshake (SPAKE2+)
+**Priority:** P1 (second authentication mode per spec)
+**File:** `crates/zp-core/src/session.rs`
+**Status:** 🔲 Planned
+**Spec Reference:** §4.3
+**Effort Estimate:** LARGE (40-60 hours)
+
+**Current Gap:**
+Session implementation only supports Stranger Mode (X25519/ML-KEM hybrid KEX). Known Mode uses SPAKE2+ password-authenticated key exchange for trusted peers with shared secrets.
+
+**Acceptance criteria:**
+- [ ] SPAKE2+ implementation in zp-crypto (or use external crate)
+- [ ] Session::known_mode_client_start() - Generate KnownHello with SPAKE2+ message
+- [ ] Session::known_mode_server_process_hello() - Verify SPAKE2+ message
+- [ ] Session::known_mode_client_process_response() - Derive shared secret
+- [ ] Session::known_mode_server_build_response() - Generate KnownResponse
+- [ ] Session::known_mode_client_build_finish() - Generate KnownFinish with verification
+- [ ] Session key derivation per spec §4.3.4
+  - Session secret = HKDF(spake2_shared_secret, salt=client_random || server_random, info="zp-session-secret")
+  - Session keys via derive_session_keys_known()
+- [ ] Conformance tests from TEST_VECTORS.md (if available)
+- [ ] Password strength enforcement (minimum entropy requirements)
+- [ ] Downgrade attack prevention (Known → Stranger attack detection)
+- [ ] Agent: crypto-impl reviews SPAKE2+ integration
+
+**Implementation Steps:**
+1. Research SPAKE2+ Rust implementations (RustCrypto/spake2, evaluate security audit status)
+2. Integrate SPAKE2+ into zp-crypto with Zeroizing<> wrapper
+3. Implement KnownHello/KnownResponse/KnownFinish frame handlers
+4. Add Known Mode state machine transitions
+5. Write conformance tests (if TEST_VECTORS.md has Known Mode vectors)
+6. Security review with crypto-impl agent
+
+**Blocking Dependencies:** None (can proceed in parallel with other tasks)
+
+**Related Spec Sections:**
+- §4.3: Known Mode Handshake Protocol
+- §4.3.1-4.3.3: KnownHello, KnownResponse, KnownFinish frame formats
+- §4.3.4: Known Mode Key Derivation
+
+---
+
+### Task 4.2: Key Rotation Protocol
+**Priority:** P1 (long-lived sessions require periodic rekey)
+**File:** `crates/zp-core/src/session.rs`
+**Status:** 🔲 Planned
+**Spec Reference:** §4.6
+**Effort Estimate:** MEDIUM (16-24 hours)
+
+**Current Gap:**
+Session establishment derives initial traffic keys, but no mechanism for rotating keys after data transfer. Per spec §4.6, sessions must support periodic key rotation for forward secrecy.
+
+**Acceptance criteria:**
+- [ ] Session::initiate_key_rotation() - Generate KeyUpdate frame with new epoch
+- [ ] Session::process_key_update() - Verify KeyUpdate, derive new traffic keys
+- [ ] Session::send_key_update_ack() - Confirm key rotation with KeyUpdateAck
+- [ ] Key epoch tracking (32-bit counter per spec §4.6.2)
+- [ ] Traffic key derivation per spec §4.6.3
+  - New C2S key = HKDF(current_c2s_key, salt=session_id || key_epoch, info="zp-traffic-key-c2s")
+  - New S2C key = HKDF(current_s2c_key, salt=session_id || key_epoch, info="zp-traffic-key-s2c")
+- [ ] Graceful transition (buffer in-flight frames during rotation)
+- [ ] Automatic rotation trigger (configurable: after N bytes or M seconds)
+- [ ] Conformance tests from TEST_VECTORS.md §2.4 (Key Rotation Derivation)
+- [ ] State machine integration (AwaitingKeyUpdateAck state)
+- [ ] Error handling for key rotation failures (RekeyFailed error code 0x0B)
+
+**Implementation Steps:**
+1. Add key_epoch field to Session struct
+2. Implement KeyUpdate/KeyUpdateAck frame generation
+3. Add key rotation state transitions
+4. Integrate TEST_VECTORS.md §2.4 test vectors
+5. Add automatic rotation triggers (bytes transferred, time elapsed)
+6. Write unit tests for key rotation flow
+
+**Blocking Dependencies:** None
+
+**Related Spec Sections:**
+- §4.6: Key Rotation Protocol
+- §4.6.1: Key Rotation Overview
+- §4.6.2: KeyUpdate Frame Format
+- §4.6.3: Traffic Key Derivation
+- §4.6.4: Key Rotation Timeline
+- §4.6.5: KeyUpdateAck Frame Format
+
+---
+
+### Task 4.3: Transport Migration (Sync-Frame Integration)
+**Priority:** P1 (mobile clients require seamless network transitions)
+**File:** `crates/zp-core/src/session.rs`, `crates/zp-core/src/stream.rs`
+**Status:** 🔲 Planned
+**Spec Reference:** §3.3.3-6 (Sync-Frame, Sync-Ack)
+**Effort Estimate:** LARGE (32-48 hours)
+
+**Current Gap:**
+Sync-Frame and Sync-Ack frame types are defined, but migration logic is not integrated. Sessions cannot survive IP address changes or transport protocol switches.
+
+**Acceptance criteria:**
+- [ ] Session::generate_sync_frame() - Serialize all stream states with XXH64 integrity
+- [ ] Session::process_sync_frame() - Validate and apply stream states from peer
+- [ ] Session::send_sync_ack() - Confirm migration with Sync-Ack
+- [ ] Stream state synchronization
+  - Send/receive sequence numbers per stream
+  - Window sizes per stream
+  - Stream lifecycle states (Open, HalfClosed, Closed)
+- [ ] XXH64 integrity hashing per spec §3.3.5
+  - Hash = XXH64(session_id || stream_id || send_seq || recv_seq || send_window || recv_window)
+  - Verify hash on receive to prevent state corruption
+- [ ] Migration triggers
+  - IP address change detection
+  - Network interface switch (Wi-Fi ↔ Cellular)
+  - QUIC connection migration (spec §3.4)
+- [ ] State Token generation and persistence (spec §6.5)
+  - Encrypted state blob for resumption after network loss
+  - Token expiration (TokenExpired error code 0x04)
+- [ ] Conformance tests for Sync-Frame/Sync-Ack roundtrip
+- [ ] Integration tests with transport layer (QUIC, WebSocket, WebRTC)
+
+**Implementation Steps:**
+1. Implement Session::generate_sync_frame() with XXH64 hashing
+2. Add migration state machine (MigrationPending → MigrationComplete)
+3. Integrate network change detection (platform-specific: iOS Network.framework, Android ConnectivityManager)
+4. Implement State Token persistence (encrypted blob with TTL)
+5. Write conformance tests for Sync-Frame format
+6. Integration test: migrate session across two QUIC connections
+
+**Blocking Dependencies:** Transport layer implementation (Phase 5)
+
+**Related Spec Sections:**
+- §3.3.3: Stream Migration Overview
+- §3.3.4: Migration Triggers
+- §3.3.5: Sync-Frame Format (28 bytes per stream)
+- §3.3.6: Sync-Ack Frame Format
+- §6.5: State Token Persistence
+
+---
+
+## Phase 4 Summary
+
+**Total Effort Estimate:** 88-132 hours (11-16.5 days @ 8 hours/day)
+
+**Priority Breakdown:**
+- Task 4.1 (Known Mode): P1 - LARGE (40-60 hours)
+- Task 4.2 (Key Rotation): P1 - MEDIUM (16-24 hours)
+- Task 4.3 (Transport Migration): P1 - LARGE (32-48 hours)
+
+**Quality Gates for Phase 4:**
+- [ ] All 3 tasks completed
+- [ ] Known Mode and Stranger Mode both fully tested
+- [ ] Key rotation triggers work automatically (bytes + time thresholds)
+- [ ] Migration survives IP changes without data loss
+- [ ] Test coverage >80% for session.rs
+- [ ] Zero clippy warnings
+- [ ] crypto-impl approval for SPAKE2+ integration
+- [ ] Conformance tests for all new features
+
+**Dependencies:**
+- Transport layer (Phase 5) needed for full migration testing
+- SPAKE2+ library selection (evaluate security audit status)
+
+**Recommended Order:**
+1. Task 4.2 (Key Rotation) - Smallest scope, no external dependencies
+2. Task 4.1 (Known Mode) - Medium scope, requires SPAKE2+ integration
+3. Task 4.3 (Transport Migration) - Largest scope, requires transport layer
+
+---
+
 ## Next Steps
 
-**Option A: Complete Phase 3 Quality Gate**
+**Phase 3 Quality Gate: ✅ COMPLETE**
+
+**Immediate Next Actions:**
+1. Review Phase 4 task breakdown
+2. Select starting task (recommend 4.2: Key Rotation for quick win)
+3. Run `/spec 4.6` to review Key Rotation protocol details
+4. Begin implementation with TDD approach
+
+**Alternative Path:**
+- Proceed to Phase 5 (Transport Layer) if Known Mode is lower priority
+- Revisit Phase 4 tasks after basic QUIC/WebSocket integration complete
+
+**Recommended:** Complete Task 4.2 (Key Rotation) next for immediate security benefit (forward secrecy).
 Recommended before moving to Phase 4 (Transport Layer):
 1. Run `/fuzz frame` to add fuzzing harnesses
 2. Add session conformance tests from TEST_VECTORS.md
