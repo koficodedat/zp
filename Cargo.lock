@@ -2282,6 +2282,7 @@ name = "zp-conformance-tests"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "sha2",
  "zp-core",
  "zp-crypto",
 ]
