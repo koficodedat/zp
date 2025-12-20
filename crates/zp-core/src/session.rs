@@ -10,7 +10,10 @@ use crate::{frame::Frame, Error, Result};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 use zp_crypto::{
-    kdf::{derive_session_keys_stranger, derive_session_secret_stranger},
+    kdf::{
+        derive_session_keys_stranger, derive_session_secret_stranger, derive_traffic_key,
+        update_current_secret, KeyDirection,
+    },
     kex::{EcdhP256KeyPair, MlKem1024KeyPair, MlKem768KeyPair, X25519KeyPair},
     suite::{CipherSuite, MlKemVariant},
 };
@@ -150,7 +153,7 @@ enum SessionState {
 pub struct SessionKeys {
     /// Session identifier (16 bytes).
     pub session_id: [u8; 16],
-    /// Session secret for key rotation.
+    /// Session secret for key rotation (current_secret).
     pub session_secret: Zeroizing<[u8; 32]>,
     /// Client-to-server key.
     pub client_to_server_key: Zeroizing<[u8; 32]>,
@@ -160,6 +163,10 @@ pub struct SessionKeys {
     pub send_key: Zeroizing<[u8; 32]>,
     /// Receive key (role-dependent).
     pub recv_key: Zeroizing<[u8; 32]>,
+    /// Current key epoch (increments on each rotation).
+    pub key_epoch: u32,
+    /// Pending key rotation epoch (if waiting for ack).
+    pub pending_epoch: Option<u32>,
 }
 
 /// Generate 32 random bytes using a cryptographically secure RNG.
@@ -720,6 +727,8 @@ impl Session {
             server_to_client_key,
             send_key,
             recv_key,
+            key_epoch: 0,        // Initial epoch is 0
+            pending_epoch: None, // No pending rotation initially
         })
     }
 
@@ -768,6 +777,282 @@ impl Session {
             ZP_CLASSICAL_2 => Ok(CipherSuite::ZpClassical2),
             _ => Err(Error::ProtocolViolation("Unknown cipher suite".into())),
         }
+    }
+
+    // === Key Rotation (§4.6) ===
+
+    /// Initiate key rotation for specified direction(s) (§4.6.4).
+    ///
+    /// # Arguments
+    ///
+    /// * `direction` - Which keys to rotate (0x01=C2S, 0x02=S2C, 0x03=both)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `KeyUpdate` frame to send to peer.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if session not established or rotation already pending.
+    pub fn initiate_key_rotation(&mut self, direction: u8) -> Result<Frame> {
+        // Validate direction
+        if direction == 0 || direction > 0x03 {
+            return Err(Error::ProtocolViolation(
+                "Invalid key rotation direction".into(),
+            ));
+        }
+
+        let keys = self.keys.as_mut().ok_or_else(|| {
+            Error::ProtocolViolation("Cannot rotate keys before session established".into())
+        })?;
+
+        // Check if rotation already pending
+        if keys.pending_epoch.is_some() {
+            return Err(Error::ProtocolViolation(
+                "Key rotation already pending".into(),
+            ));
+        }
+
+        // Increment epoch
+        let new_epoch = keys
+            .key_epoch
+            .checked_add(1)
+            .ok_or_else(|| Error::ProtocolViolation("Key epoch overflow".into()))?;
+
+        // Derive new key(s) based on direction
+        let current_secret = &*keys.session_secret;
+        let session_id = &keys.session_id;
+
+        match direction {
+            0x01 => {
+                // Rotate C2S only
+                let new_c2s_key = derive_traffic_key(
+                    current_secret,
+                    session_id,
+                    new_epoch,
+                    KeyDirection::ClientToServer,
+                )?;
+                keys.client_to_server_key = new_c2s_key.clone();
+
+                // Update send/recv based on role
+                match self.role {
+                    Role::Client => keys.send_key = new_c2s_key,
+                    Role::Server => keys.recv_key = new_c2s_key,
+                }
+            }
+            0x02 => {
+                // Rotate S2C only
+                let new_s2c_key = derive_traffic_key(
+                    current_secret,
+                    session_id,
+                    new_epoch,
+                    KeyDirection::ServerToClient,
+                )?;
+                keys.server_to_client_key = new_s2c_key.clone();
+
+                // Update send/recv based on role
+                match self.role {
+                    Role::Client => keys.recv_key = new_s2c_key,
+                    Role::Server => keys.send_key = new_s2c_key,
+                }
+            }
+            0x03 => {
+                // Rotate both
+                let new_c2s_key = derive_traffic_key(
+                    current_secret,
+                    session_id,
+                    new_epoch,
+                    KeyDirection::ClientToServer,
+                )?;
+                let new_s2c_key = derive_traffic_key(
+                    current_secret,
+                    session_id,
+                    new_epoch,
+                    KeyDirection::ServerToClient,
+                )?;
+
+                keys.client_to_server_key = new_c2s_key.clone();
+                keys.server_to_client_key = new_s2c_key.clone();
+
+                // Update send/recv based on role
+                match self.role {
+                    Role::Client => {
+                        keys.send_key = new_c2s_key;
+                        keys.recv_key = new_s2c_key;
+                    }
+                    Role::Server => {
+                        keys.send_key = new_s2c_key;
+                        keys.recv_key = new_c2s_key;
+                    }
+                }
+            }
+            _ => unreachable!("Invalid direction already validated"),
+        }
+
+        // Update current_secret for forward secrecy
+        let new_secret = update_current_secret(current_secret, session_id, new_epoch)?;
+        keys.session_secret = new_secret;
+
+        // Mark rotation as pending
+        keys.pending_epoch = Some(new_epoch);
+
+        // Build KeyUpdate frame
+        Ok(Frame::KeyUpdate {
+            key_epoch: new_epoch,
+            direction,
+        })
+    }
+
+    /// Process received KeyUpdate frame from peer (§4.6.4).
+    ///
+    /// # Arguments
+    ///
+    /// * `key_epoch` - Epoch number from KeyUpdate frame
+    /// * `direction` - Direction(s) to rotate (0x01=C2S, 0x02=S2C, 0x03=both)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `KeyUpdateAck` frame to send back to peer.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if session not established or invalid epoch.
+    pub fn process_key_update(&mut self, key_epoch: u32, direction: u8) -> Result<Frame> {
+        // Validate direction
+        if direction == 0 || direction > 0x03 {
+            return Err(Error::ProtocolViolation(
+                "Invalid key rotation direction".into(),
+            ));
+        }
+
+        let keys = self.keys.as_mut().ok_or_else(|| {
+            Error::ProtocolViolation("Cannot rotate keys before session established".into())
+        })?;
+
+        // Epoch must be exactly current + 1
+        let expected_epoch = keys.key_epoch + 1;
+        if key_epoch != expected_epoch {
+            return Err(Error::ProtocolViolation(format!(
+                "Invalid key epoch: got {}, expected {}",
+                key_epoch, expected_epoch
+            )));
+        }
+
+        // Derive new key(s) using same derivation as initiator
+        let current_secret = &*keys.session_secret;
+        let session_id = &keys.session_id;
+
+        match direction {
+            0x01 => {
+                // Rotate C2S only
+                let new_c2s_key = derive_traffic_key(
+                    current_secret,
+                    session_id,
+                    key_epoch,
+                    KeyDirection::ClientToServer,
+                )?;
+                keys.client_to_server_key = new_c2s_key.clone();
+
+                // Update send/recv based on role
+                match self.role {
+                    Role::Client => keys.send_key = new_c2s_key,
+                    Role::Server => keys.recv_key = new_c2s_key,
+                }
+            }
+            0x02 => {
+                // Rotate S2C only
+                let new_s2c_key = derive_traffic_key(
+                    current_secret,
+                    session_id,
+                    key_epoch,
+                    KeyDirection::ServerToClient,
+                )?;
+                keys.server_to_client_key = new_s2c_key.clone();
+
+                // Update send/recv based on role
+                match self.role {
+                    Role::Client => keys.recv_key = new_s2c_key,
+                    Role::Server => keys.send_key = new_s2c_key,
+                }
+            }
+            0x03 => {
+                // Rotate both
+                let new_c2s_key = derive_traffic_key(
+                    current_secret,
+                    session_id,
+                    key_epoch,
+                    KeyDirection::ClientToServer,
+                )?;
+                let new_s2c_key = derive_traffic_key(
+                    current_secret,
+                    session_id,
+                    key_epoch,
+                    KeyDirection::ServerToClient,
+                )?;
+
+                keys.client_to_server_key = new_c2s_key.clone();
+                keys.server_to_client_key = new_s2c_key.clone();
+
+                // Update send/recv based on role
+                match self.role {
+                    Role::Client => {
+                        keys.send_key = new_c2s_key;
+                        keys.recv_key = new_s2c_key;
+                    }
+                    Role::Server => {
+                        keys.send_key = new_s2c_key;
+                        keys.recv_key = new_c2s_key;
+                    }
+                }
+            }
+            _ => unreachable!("Invalid direction already validated"),
+        }
+
+        // Update current_secret for forward secrecy
+        let new_secret = update_current_secret(current_secret, session_id, key_epoch)?;
+        keys.session_secret = new_secret;
+
+        // Update epoch
+        keys.key_epoch = key_epoch;
+
+        // Build KeyUpdateAck frame
+        Ok(Frame::KeyUpdateAck {
+            acked_epoch: key_epoch,
+        })
+    }
+
+    /// Process received KeyUpdateAck frame from peer (§4.6.4).
+    ///
+    /// # Arguments
+    ///
+    /// * `acked_epoch` - Epoch number from KeyUpdateAck frame
+    ///
+    /// # Errors
+    ///
+    /// Returns error if no pending rotation or epoch mismatch.
+    pub fn process_key_update_ack(&mut self, acked_epoch: u32) -> Result<()> {
+        let keys = self.keys.as_mut().ok_or_else(|| {
+            Error::ProtocolViolation("Cannot process ack before session established".into())
+        })?;
+
+        // Verify we have a pending rotation
+        let pending = keys
+            .pending_epoch
+            .ok_or_else(|| Error::ProtocolViolation("No pending key rotation".into()))?;
+
+        // Verify acked epoch matches pending
+        if acked_epoch != pending {
+            return Err(Error::ProtocolViolation(format!(
+                "Key rotation ack mismatch: got {}, expected {}",
+                acked_epoch, pending
+            )));
+        }
+
+        // Commit the rotation: update epoch and clear pending
+        keys.key_epoch = pending;
+        keys.pending_epoch = None;
+
+        Ok(())
     }
 }
 
@@ -851,5 +1136,169 @@ mod tests {
         // Should fail if no common cipher
         let result = session.negotiate_cipher(&[0xFF]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_key_rotation_protocol() {
+        // Establish a session first
+        let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+        let client_hello = client.client_start_stranger().unwrap();
+
+        let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+        let server_hello = server.server_process_client_hello(client_hello).unwrap();
+
+        let client_finish = client.client_process_server_hello(server_hello).unwrap();
+        server.server_process_client_finish(client_finish).unwrap();
+
+        // Both sessions established
+        assert!(client.is_established());
+        assert!(server.is_established());
+
+        // Verify initial epoch is 0
+        assert_eq!(client.keys().unwrap().key_epoch, 0);
+        assert_eq!(server.keys().unwrap().key_epoch, 0);
+
+        // Client initiates key rotation for both directions
+        let key_update = client.initiate_key_rotation(0x03).unwrap();
+
+        // Verify KeyUpdate frame
+        match key_update {
+            Frame::KeyUpdate {
+                key_epoch,
+                direction,
+            } => {
+                assert_eq!(key_epoch, 1, "Epoch should increment to 1");
+                assert_eq!(direction, 0x03, "Should rotate both directions");
+            }
+            _ => panic!("Expected KeyUpdate frame"),
+        }
+
+        // Verify client has pending epoch
+        assert_eq!(client.keys().unwrap().pending_epoch, Some(1));
+
+        // Server processes KeyUpdate
+        let key_update_ack = if let Frame::KeyUpdate {
+            key_epoch,
+            direction,
+        } = key_update
+        {
+            server.process_key_update(key_epoch, direction).unwrap()
+        } else {
+            panic!("Expected KeyUpdate frame");
+        };
+
+        // Verify KeyUpdateAck frame
+        match key_update_ack {
+            Frame::KeyUpdateAck { acked_epoch } => {
+                assert_eq!(acked_epoch, 1, "Should ack epoch 1");
+            }
+            _ => panic!("Expected KeyUpdateAck frame"),
+        }
+
+        // Verify server epoch updated
+        assert_eq!(server.keys().unwrap().key_epoch, 1);
+
+        // Client processes KeyUpdateAck
+        if let Frame::KeyUpdateAck { acked_epoch } = key_update_ack {
+            client.process_key_update_ack(acked_epoch).unwrap();
+        }
+
+        // Verify client epoch updated and pending cleared
+        assert_eq!(client.keys().unwrap().key_epoch, 1);
+        assert_eq!(client.keys().unwrap().pending_epoch, None);
+
+        // Keys should still be complementary after rotation
+        let client_keys = client.keys().unwrap();
+        let server_keys = server.keys().unwrap();
+        assert_eq!(&*client_keys.send_key, &*server_keys.recv_key);
+        assert_eq!(&*client_keys.recv_key, &*server_keys.send_key);
+    }
+
+    #[test]
+    fn test_key_rotation_c2s_only() {
+        // Establish session
+        let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+        let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+        let ch = client.client_start_stranger().unwrap();
+        let sh = server.server_process_client_hello(ch).unwrap();
+        let cf = client.client_process_server_hello(sh).unwrap();
+        server.server_process_client_finish(cf).unwrap();
+
+        // Rotate C2S key only (direction 0x01)
+        let key_update = client.initiate_key_rotation(0x01).unwrap();
+
+        if let Frame::KeyUpdate {
+            key_epoch,
+            direction,
+        } = key_update
+        {
+            assert_eq!(direction, 0x01, "Should rotate C2S only");
+            let ack = server.process_key_update(key_epoch, direction).unwrap();
+
+            if let Frame::KeyUpdateAck { acked_epoch } = ack {
+                client.process_key_update_ack(acked_epoch).unwrap();
+            }
+        }
+
+        // Verify both have same epoch
+        assert_eq!(client.keys().unwrap().key_epoch, 1);
+        assert_eq!(server.keys().unwrap().key_epoch, 1);
+    }
+
+    #[test]
+    fn test_key_rotation_before_established() {
+        // Try to rotate keys before session is established
+        let mut session = Session::new(Role::Client, HandshakeMode::Stranger);
+
+        let result = session.initiate_key_rotation(0x03);
+        assert!(
+            result.is_err(),
+            "Should fail to rotate before session established"
+        );
+    }
+
+    #[test]
+    fn test_key_rotation_invalid_direction() {
+        // Establish session
+        let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+        let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+        let ch = client.client_start_stranger().unwrap();
+        let sh = server.server_process_client_hello(ch).unwrap();
+        let cf = client.client_process_server_hello(sh).unwrap();
+        server.server_process_client_finish(cf).unwrap();
+
+        // Try invalid directions
+        assert!(
+            client.initiate_key_rotation(0x00).is_err(),
+            "Direction 0 should be invalid"
+        );
+        assert!(
+            client.initiate_key_rotation(0x04).is_err(),
+            "Direction > 3 should be invalid"
+        );
+    }
+
+    #[test]
+    fn test_key_rotation_pending_blocks_new() {
+        // Establish session
+        let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+        let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+        let ch = client.client_start_stranger().unwrap();
+        let sh = server.server_process_client_hello(ch).unwrap();
+        let cf = client.client_process_server_hello(sh).unwrap();
+        server.server_process_client_finish(cf).unwrap();
+
+        // Initiate rotation
+        client.initiate_key_rotation(0x03).unwrap();
+
+        // Try to initiate another rotation while pending
+        let result = client.initiate_key_rotation(0x03);
+        assert!(
+            result.is_err(),
+            "Should block new rotation while one is pending"
+        );
     }
 }

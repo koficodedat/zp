@@ -466,3 +466,88 @@ fn test_cipher_negotiation_failure() {
     let result = server.server_process_client_hello(client_hello);
     assert!(result.is_err(), "Server should reject unsupported cipher");
 }
+
+#[test]
+fn test_key_rotation_secret_update() {
+    // TEST_VECTORS.md §2.4
+    // Tests current_secret update for forward secrecy per spec §4.6.3
+
+    // Use session_secret and session_id from TEST_VECTORS.md §2.2
+    // These are the outputs from session establishment
+    let session_id = hex::decode("0102030405060708090a0b0c0d0e0f10").unwrap();
+    let session_id_array: [u8; 16] = session_id.try_into().unwrap();
+
+    let current_secret =
+        hex::decode("1f2e3d4c5b6a798887969faebdccdbeaf0ff0e1d2c3b4a5968778695a4b3c2d1").unwrap();
+    let current_secret_array: [u8; 32] = current_secret.try_into().unwrap();
+
+    // Key epoch = 1 (u32 little-endian: 01000000)
+    let key_epoch: u32 = 1;
+
+    // Derive C2S key
+    let c2s_key = zp_crypto::kdf::derive_traffic_key(
+        &current_secret_array,
+        &session_id_array,
+        key_epoch,
+        zp_crypto::kdf::KeyDirection::ClientToServer,
+    )
+    .expect("C2S key derivation should succeed");
+
+    // Derive S2C key
+    let s2c_key = zp_crypto::kdf::derive_traffic_key(
+        &current_secret_array,
+        &session_id_array,
+        key_epoch,
+        zp_crypto::kdf::KeyDirection::ServerToClient,
+    )
+    .expect("S2C key derivation should succeed");
+
+    // Verify keys are 32 bytes
+    assert_eq!(c2s_key.len(), 32, "C2S key must be 32 bytes");
+    assert_eq!(s2c_key.len(), 32, "S2C key must be 32 bytes");
+
+    // Verify keys are different
+    assert_ne!(
+        &c2s_key[..],
+        &s2c_key[..],
+        "C2S and S2C keys must be different"
+    );
+
+    // Verify determinism: re-derive and check
+    let c2s_key2 = zp_crypto::kdf::derive_traffic_key(
+        &current_secret_array,
+        &session_id_array,
+        key_epoch,
+        zp_crypto::kdf::KeyDirection::ClientToServer,
+    )
+    .expect("C2S key derivation should succeed");
+
+    assert_eq!(
+        &c2s_key[..],
+        &c2s_key2[..],
+        "Key derivation must be deterministic"
+    );
+
+    // Verify current_secret update
+    let new_secret =
+        zp_crypto::kdf::update_current_secret(&current_secret_array, &session_id_array, key_epoch)
+            .expect("Secret update should succeed");
+
+    assert_eq!(new_secret.len(), 32, "Updated secret must be 32 bytes");
+    assert_ne!(
+        &new_secret[..],
+        &current_secret_array[..],
+        "Updated secret must differ from current secret"
+    );
+
+    // Verify updated secret is deterministic
+    let new_secret2 =
+        zp_crypto::kdf::update_current_secret(&current_secret_array, &session_id_array, key_epoch)
+            .expect("Secret update should succeed");
+
+    assert_eq!(
+        &new_secret[..],
+        &new_secret2[..],
+        "Secret update must be deterministic"
+    );
+}
