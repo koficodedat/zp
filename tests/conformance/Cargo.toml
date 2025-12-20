@@ -5,9 +5,14 @@ edition = "2021"
 publish = false
 
 [dependencies]
+zp-core = { path = "../../crates/zp-core" }
 zp-crypto = { path = "../../crates/zp-crypto" }
 hex = "0.4"
 
 [[test]]
 name = "crypto"
 path = "crypto_test.rs"
+
+[[test]]
+name = "frame"
+path = "frame_conformance.rs"
