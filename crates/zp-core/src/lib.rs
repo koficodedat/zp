@@ -17,7 +17,7 @@ pub mod frame;
 pub mod session;
 pub mod stream;
 
-pub use error::{Error, Result};
+pub use error::{Error, ErrorCode, Result};
 pub use frame::Frame;
 pub use session::Session;
 pub use stream::Stream;
