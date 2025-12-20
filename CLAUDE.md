@@ -171,14 +171,16 @@ All commands are in `.claude/commands/`. Use these for common tasks:
 
 ## Agents
 
-Reference documents in `.claude/agents/` provide domain expertise patterns. These are not automatically invoked—read them for guidance on specific domains:
+Reference documents in `.claude/agents/` provide domain expertise patterns. Claude will automatically invoke these when appropriate based on the task:
 
-| Agent File | Domain | When to Reference |
-|------------|--------|-------------------|
-| `crypto-impl.md` | Cryptographic code review | When writing/reviewing crypto code |
-| `fuzz-gen.md` | Fuzzing harness generation | When adding fuzz targets |
-| `bench-runner.md` | Performance benchmarking | When analyzing performance |
-| `platform-agents.md` | iOS/Android/Browser specifics | When doing platform work |
+| Agent | Domain | When Invoked |
+|-------|--------|--------------|
+| `crypto-impl` | Cryptographic code review | Writing/reviewing crypto code |
+| `fuzz-gen` | Fuzzing harness generation | Adding fuzz targets, crash analysis |
+| `bench-runner` | Performance benchmarking | Performance analysis, optimization |
+| `platform-ios` | iOS implementation | iOS-specific code, Secure Enclave, Network.framework |
+| `platform-android` | Android implementation | Android-specific code, KeyStore, Foreground Services |
+| `platform-browser` | Browser/WASM implementation | WebTransport, WebRTC, WebCrypto, WASM bindings |
 
 ## MCP Integration
 

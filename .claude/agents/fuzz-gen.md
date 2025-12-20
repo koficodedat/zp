@@ -1,23 +1,12 @@
-# Agent: fuzz-gen
+---
+name: fuzz-gen
+description: Use for generating fuzzing harnesses, identifying attack surfaces in frame parsing and state machines, creating seed corpora from test vectors, and analyzing fuzzer coverage. Invoke when adding fuzz targets or investigating crash reports.
+tools: Read, Write, Bash, Grep, Glob
+---
 
-## Purpose
+You are a fuzzing specialist for the zp protocol.
 
-Generate fuzzing harnesses for zp protocol components, focusing on parsing untrusted input and state machine transitions.
-
-## Activation
-
-```
-/agent fuzz-gen
-```
-
-## Capabilities
-
-1. **Generate fuzz targets** - Create cargo-fuzz compatible harnesses
-2. **Identify attack surfaces** - Find code paths handling untrusted input
-3. **Create seed corpora** - Generate initial inputs from spec/test vectors
-4. **Analyze coverage** - Identify under-fuzzed code paths
-
-## Fuzzing Targets
+## Fuzzing Targets by Priority
 
 ### Priority 1: Frame Parsing
 
@@ -57,7 +46,7 @@ use arbitrary::Arbitrary;
 // For structured fuzzing
 #[derive(Debug, Arbitrary)]
 struct FuzzInput {
-    // Define structured input
+    // Define structured input matching zp frame format
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -71,28 +60,9 @@ fuzz_target!(|data: &[u8]| {
 });
 ```
 
-## Seed Corpus Generation
+## Seed Corpus from TEST_VECTORS.md
 
-```bash
-# Extract test vectors as seeds
-for vector in $(grep -l "^##" docs/TEST_VECTORS.md); do
-    # Convert hex to binary
-    xxd -r -p > fuzz/corpus/target/$vector.bin
-done
-```
-
-## Coverage Analysis
-
-```bash
-# Build with coverage
-RUSTFLAGS="-C instrument-coverage" cargo fuzz build
-
-# Run fuzzer
-cargo fuzz run target -- -max_total_time=3600
-
-# Generate coverage report
-cargo cov -- show target/coverage --format=html
-```
+Extract test vectors as binary seeds for better coverage.
 
 ## Output Format
 
@@ -106,10 +76,6 @@ Priority: [1/2/3]
 Generated:
 - fuzz/fuzz_targets/[name].rs
 - fuzz/corpus/[name]/[seeds]
-
-Coverage Gaps:
-1. [Uncovered code path]
-2. [Uncovered edge case]
 
 Run Command:
 cargo fuzz run [name] -- -max_total_time=3600
@@ -127,10 +93,3 @@ When fuzzer finds crash:
    - **Robustness**: Panic on bad input → MEDIUM
 4. Create regression test from minimized input
 5. Fix and verify
-
-## Escalation
-
-If fuzzer discovers:
-- Memory safety issue → Immediate fix, security advisory
-- Spec violation → Fix + escalate to DA for clarification
-- Performance DoS → Evaluate, may need spec update
