@@ -126,11 +126,20 @@ fn test_session_id_derivation_stranger_mode() {
 
 ### After Writing Code
 
+**Option A: Manual workflow**
 1. Run `cargo clippy -- -D warnings`
 2. Run `cargo test`
 3. Run `cargo bench` if performance-critical
 4. Run `cargo fuzz` if parsing untrusted input
 5. Update CHANGELOG if user-visible
+6. Git commit and push manually
+
+**Option B: Automated workflow (recommended)**
+1. Run `/smart-commit` - Handles formatting, clippy, tests, cleanup, and creates clean commits
+2. Run `/smart-push` - Validates quality gate, verifies crypto changes, and pushes with optional PR
+3. Alternatively: `/smart-commit-quick` for WIP commits, `/smart-push-quick` after local validation
+
+The automated workflow eliminates manual pre-flight checks and ensures consistent commit quality.
 
 ### Escalation to DA
 
@@ -154,6 +163,8 @@ Copy the escalation to the DA project (claude.ai) for resolution. Once resolved,
 
 All commands are in `.claude/commands/`. Use these for common tasks:
 
+### Development Commands
+
 | Command | Purpose |
 |---------|---------|
 | `/spec [section]` | Look up spec section by number or search term |
@@ -168,6 +179,33 @@ All commands are in `.claude/commands/`. Use these for common tasks:
 | `/new-feature [name]` | Guided workflow for adding a feature |
 | `/fix-bug [desc]` | Guided workflow for fixing a bug |
 | `/release [major\|minor\|patch]` | Prepare a release |
+
+### Git Workflow Commands
+
+Automated commit and push workflows with ZP-specific quality gates:
+
+| Command | Purpose | When to Use |
+|---------|---------|-------------|
+| `/smart-commit` | Full commit automation with pre-flight checks, tests, and intelligent grouping | Default for all commits before pushing |
+| `/smart-push` | Safe push with quality gates, crypto verification, and PR creation | Default for all pushes to remote |
+| `/smart-commit-quick` | Fast WIP commits (skip tests, minimal checks) | Quick checkpoints during active development |
+| `/smart-commit-dry` | Analyze what would be committed without executing | Preview commit plan before executing |
+| `/smart-push-quick` | Quick push with minimal checks (skip tests) | After local validation with /check or /smart-commit |
+| `/review-code [crate]` | Comprehensive code review with automated pre-flight + manual inspection | Before merge, after feature completion |
+
+**Recommended workflow:**
+```bash
+# During development
+/smart-commit-quick "WIP: implement feature"  # Fast checkpoint
+
+# Before pushing
+/smart-commit                                  # Full validation + clean commits
+/smart-push                                    # Quality gate + push + PR
+
+# Alternative: Quick push after smart-commit
+/smart-commit                                  # Full validation already done
+/smart-push-quick                              # Skip redundant checks
+```
 
 ## Agents
 
