@@ -152,3 +152,82 @@ impl ErrorCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_code_to_u8() {
+        // Test all 14 error codes
+        assert_eq!(ErrorCode::HandshakeTimeout.to_u8(), 0x01);
+        assert_eq!(ErrorCode::CipherDowngrade.to_u8(), 0x02);
+        assert_eq!(ErrorCode::MigrationFailed.to_u8(), 0x03);
+        assert_eq!(ErrorCode::TokenExpired.to_u8(), 0x04);
+        assert_eq!(ErrorCode::TeeAttestation.to_u8(), 0x05);
+        assert_eq!(ErrorCode::RelayUnavailable.to_u8(), 0x06);
+        assert_eq!(ErrorCode::VersionMismatch.to_u8(), 0x07);
+        assert_eq!(ErrorCode::RateLimited.to_u8(), 0x08);
+        assert_eq!(ErrorCode::TokenIpMismatch.to_u8(), 0x09);
+        assert_eq!(ErrorCode::StreamLimit.to_u8(), 0x0A);
+        assert_eq!(ErrorCode::RekeyFailed.to_u8(), 0x0B);
+        assert_eq!(ErrorCode::SyncRejected.to_u8(), 0x0C);
+        assert_eq!(ErrorCode::FlowStall.to_u8(), 0x0D);
+        assert_eq!(ErrorCode::ProtocolViolation.to_u8(), 0x0E);
+    }
+
+    #[test]
+    fn test_error_code_from_u8() {
+        // Test all 14 error codes roundtrip
+        assert_eq!(ErrorCode::from_u8(0x01), Some(ErrorCode::HandshakeTimeout));
+        assert_eq!(ErrorCode::from_u8(0x02), Some(ErrorCode::CipherDowngrade));
+        assert_eq!(ErrorCode::from_u8(0x03), Some(ErrorCode::MigrationFailed));
+        assert_eq!(ErrorCode::from_u8(0x04), Some(ErrorCode::TokenExpired));
+        assert_eq!(ErrorCode::from_u8(0x05), Some(ErrorCode::TeeAttestation));
+        assert_eq!(ErrorCode::from_u8(0x06), Some(ErrorCode::RelayUnavailable));
+        assert_eq!(ErrorCode::from_u8(0x07), Some(ErrorCode::VersionMismatch));
+        assert_eq!(ErrorCode::from_u8(0x08), Some(ErrorCode::RateLimited));
+        assert_eq!(ErrorCode::from_u8(0x09), Some(ErrorCode::TokenIpMismatch));
+        assert_eq!(ErrorCode::from_u8(0x0A), Some(ErrorCode::StreamLimit));
+        assert_eq!(ErrorCode::from_u8(0x0B), Some(ErrorCode::RekeyFailed));
+        assert_eq!(ErrorCode::from_u8(0x0C), Some(ErrorCode::SyncRejected));
+        assert_eq!(ErrorCode::from_u8(0x0D), Some(ErrorCode::FlowStall));
+        assert_eq!(ErrorCode::from_u8(0x0E), Some(ErrorCode::ProtocolViolation));
+
+        // Test invalid codes
+        assert_eq!(ErrorCode::from_u8(0x00), None);
+        assert_eq!(ErrorCode::from_u8(0x0F), None);
+        assert_eq!(ErrorCode::from_u8(0xFF), None);
+    }
+
+    #[test]
+    fn test_error_code_roundtrip() {
+        // All error codes should roundtrip correctly
+        let codes = [
+            ErrorCode::HandshakeTimeout,
+            ErrorCode::CipherDowngrade,
+            ErrorCode::MigrationFailed,
+            ErrorCode::TokenExpired,
+            ErrorCode::TeeAttestation,
+            ErrorCode::RelayUnavailable,
+            ErrorCode::VersionMismatch,
+            ErrorCode::RateLimited,
+            ErrorCode::TokenIpMismatch,
+            ErrorCode::StreamLimit,
+            ErrorCode::RekeyFailed,
+            ErrorCode::SyncRejected,
+            ErrorCode::FlowStall,
+            ErrorCode::ProtocolViolation,
+        ];
+
+        for code in &codes {
+            let wire = code.to_u8();
+            let parsed = ErrorCode::from_u8(wire);
+            assert!(
+                parsed.is_some(),
+                "Failed to parse wire format 0x{:02X}",
+                wire
+            );
+        }
+    }
+}
