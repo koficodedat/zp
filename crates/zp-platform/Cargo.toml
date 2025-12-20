@@ -1,0 +1,34 @@
+[package]
+name = "zp-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Platform-specific integrations for the zp protocol"
+
+[dependencies]
+# Internal dependencies
+zp-core = { path = "../zp-core" }
+zp-crypto = { path = "../zp-crypto" }
+zp-transport = { path = "../zp-transport" }
+
+# Utilities
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# iOS-specific dependencies will go here
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Android-specific dependencies will go here
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# WASM/browser dependencies will go here
+
+[features]
+default = []
+ios = []
+android = []
+browser = []

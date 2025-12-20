@@ -1,0 +1,31 @@
+[package]
+name = "zp-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Foreign function interface bindings for the zp protocol"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+# Internal dependencies
+zp-core = { path = "../zp-core" }
+zp-crypto = { path = "../zp-crypto" }
+zp-transport = { path = "../zp-transport" }
+zp-platform = { path = "../zp-platform" }
+
+# FFI generation
+uniffi = { workspace = true }
+
+# Utilities
+thiserror = { workspace = true }
+
+[build-dependencies]
+uniffi = { workspace = true, features = ["build"] }
+
+[features]
+default = []

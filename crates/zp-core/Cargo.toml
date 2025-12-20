@@ -1,0 +1,33 @@
+[package]
+name = "zp-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Core protocol engine for the zp transport protocol"
+
+[dependencies]
+# Internal dependencies
+zp-crypto = { path = "../zp-crypto" }
+
+# Security
+zeroize = { workspace = true }
+subtle = { workspace = true }
+
+# Utilities
+bytes = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+hex = { workspace = true }
+
+[features]
+default = ["std"]
+std = []

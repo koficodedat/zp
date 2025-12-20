@@ -1,0 +1,73 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/zp-core",
+    "crates/zp-crypto",
+    "crates/zp-transport",
+    "crates/zp-platform",
+    "crates/zp-ffi",
+    "tests/conformance",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.70"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourorg/zp"
+homepage = "https://github.com/yourorg/zp"
+
+[workspace.dependencies]
+# Cryptography (approved per crypto-impl agent)
+ring = "0.17"
+aws-lc-rs = "1.8"
+ml-kem = "0.2"
+kem = "0.3.0-pre.0"
+spake2 = "0.4"
+chacha20poly1305 = "0.10"
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+p256 = { version = "0.11", features = ["ecdh"] }
+
+# Security
+zeroize = { version = "1.7", features = ["derive"] }
+subtle = "2.5"
+
+# Transport
+quinn = "0.11"
+tokio = { version = "1.35", features = ["full"] }
+bytes = "1.5"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+
+# Error handling
+thiserror = "1.0"
+
+# FFI
+uniffi = "0.27"
+
+# Testing
+proptest = "1.4"
+criterion = "0.5"
+
+# Utilities
+hex = "0.4"
+tracing = "0.1"
+rand = "0.8"
+
+# Pinned dependencies to avoid edition2024 requirement
+base64ct = "=1.6.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.bench]
+opt-level = 3
+lto = true
+codegen-units = 1
