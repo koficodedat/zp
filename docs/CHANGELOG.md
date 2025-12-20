@@ -1,12 +1,107 @@
 # zp Protocol Changelog
 
-**Document:** Version History  
-**Covers:** RC1 through v1.0  
+**Document:** Version History
+**Covers:** RC1 through v1.0
 **Related:** [zp Specification v1.0](./zp_specification_v1.0.md) | [Test Vectors](./TEST_VECTORS.md)
 
 ---
 
-## v1.0 (December 2025)
+## Implementation Changelog
+
+### Unreleased
+
+**Added:**
+- X25519 key exchange implementation (zp-crypto)
+  - RFC 7748 §6.1 conformance with test vectors
+  - Secure key generation using CSPRNG
+  - Zeroizing wrappers for all secrets
+  - Low-order point rejection
+  - Comprehensive test coverage (5 tests, all passing)
+
+- ML-KEM-768 key encapsulation mechanism (zp-crypto)
+  - FIPS 203 conformance using RustCrypto ml-kem v0.2.1
+  - Post-quantum security (NIST security level 3, equivalent to AES-192)
+  - Secure key storage with Zeroizing wrappers for 2400-byte private keys
+  - Public key: 1184 bytes, Ciphertext: 1088 bytes, Shared secret: 32 bytes
+  - Encapsulate/decapsulate API for hybrid key exchange with X25519
+  - `#![forbid(unsafe_code)]` - zero unsafe blocks
+  - Comprehensive test coverage (8 tests passing)
+  - Crypto-impl security audit: APPROVED
+
+- ML-KEM-1024 key encapsulation mechanism (zp-crypto)
+  - FIPS 203 conformance using RustCrypto ml-kem v0.2.1
+  - Post-quantum security (NIST security level 5, equivalent to AES-256)
+  - Secure key storage with Zeroizing wrappers for 3168-byte private keys
+  - Public key: 1568 bytes, Ciphertext: 1568 bytes, Shared secret: 32 bytes
+  - Encapsulate/decapsulate API matching ML-KEM-768 pattern
+  - Used in ZP_HYBRID_2 cipher suite (X25519 + ML-KEM-1024 + ChaCha20-Poly1305)
+  - `#![forbid(unsafe_code)]` - zero unsafe blocks
+  - Comprehensive test coverage (8 unit tests + 1 conformance test, all passing)
+  - Crypto-impl security audit: APPROVED
+
+- HKDF-SHA256 key derivation functions (zp-crypto)
+  - RFC 5869 conformance using RustCrypto hkdf v0.12.4 + sha2 v0.10.9
+  - Generic `hkdf_sha256()` for flexible key derivation
+  - Stranger Mode derivations (§4.2.4): `derive_session_secret_stranger()`, `derive_session_keys_stranger()`
+  - Known Mode derivations (§4.3.4): `derive_session_secret_known()`, `derive_session_keys_known()`
+  - Key rotation support (§4.6.3): `derive_traffic_key()`, `update_current_secret()`
+  - All outputs wrapped in `Zeroizing<>` for automatic secret cleanup
+  - Little-endian encoding for key_epoch per spec
+  - Zero unsafe blocks, pure safe Rust
+  - Test coverage: RFC 5869 vectors + 6 zp-specific tests
+  - Crypto-impl security audit: APPROVED
+
+- ChaCha20-Poly1305 AEAD (zp-crypto)
+  - RFC 8439 conformance using RustCrypto chacha20poly1305 v0.10.1
+  - Used in ZP_PQC_1 and ZP_CLASSICAL_1 cipher suites
+  - Nonce construction per spec §6.5.1: `nonce[0:4]=0x00000000 || nonce[4:12]=counter (LE)`
+  - `chacha20poly1305_encrypt()` - Encrypt with AAD, returns ciphertext || tag
+  - `chacha20poly1305_decrypt()` - Decrypt and verify tag, returns `Zeroizing<Vec<u8>>`
+  - `construct_nonce()` - Build 12-byte AEAD nonce from 64-bit counter
+  - Proper error handling: `Error::Encryption` vs `Error::Decryption`
+  - Decrypted plaintext wrapped in `Zeroizing<>` for automatic secret cleanup
+  - Test coverage: RFC 8439 §2.8.2 test vector + 9 additional tests (roundtrip, failure modes, edge cases)
+  - `#![forbid(unsafe_code)]` - zero unsafe blocks
+  - Crypto-impl security audit: APPROVED WITH NOTES
+
+- AES-256-GCM AEAD (zp-crypto)
+  - NIST SP 800-38D conformance using RustCrypto aes-gcm v0.10.3
+  - Used in ZP_HYBRID_3 and ZP_CLASSICAL_2 cipher suites
+  - `aes256gcm_encrypt()` - Encrypt with 32-byte key, 12-byte nonce, AAD support
+  - `aes256gcm_decrypt()` - Decrypt and verify 16-byte authentication tag
+  - Returns `Zeroizing<Vec<u8>>` for automatic plaintext cleanup
+  - Constant-time tag verification via library implementation
+  - No key material in error messages
+  - Test coverage: NIST SP 800-38D test vector + 6 unit tests (roundtrip, wrong key/nonce/AAD, corruption, empty plaintext)
+  - `#![forbid(unsafe_code)]` - zero unsafe blocks
+  - Crypto-impl security audit: APPROVED
+
+- ECDH-P256 key exchange (zp-crypto)
+  - RFC 5903 §8.1 conformance using RustCrypto p256 v0.11.1
+  - NIST SP 800-56A compliant for FIPS 140-3 environments
+  - Used exclusively in ZP_CLASSICAL_2 cipher suite for regulatory compliance
+  - P-256 (secp256r1) elliptic curve Diffie-Hellman
+  - `EcdhP256KeyPair::generate()` - Generate random keypair
+  - `EcdhP256KeyPair::from_private()` - Deterministic keypair from 32-byte private key
+  - `exchange()` - Perform ECDH, returns `Zeroizing<[u8; 32]>` shared secret
+  - Public keys in uncompressed SEC 1 format (65 bytes: 0x04 || x || y)
+  - Automatic zeroization: SecretKey implements ZeroizeOnDrop
+  - Public key validation per NIST requirements
+  - Test coverage: RFC 5903 test vector + 8 unit tests (commutativity, determinism, roundtrip, validation, uniqueness)
+  - `#![forbid(unsafe_code)]` - zero unsafe blocks
+  - Crypto-impl security audit: APPROVED
+
+**Cipher Suite Status:**
+- ✅ **ZpHybrid1** (X25519 + ML-KEM-768 + ChaCha20-Poly1305) - DEFAULT, fully implemented
+- ✅ **ZpHybrid2** (X25519 + ML-KEM-1024 + ChaCha20-Poly1305) - High security, fully implemented
+- ✅ **ZpHybrid3** (X25519 + ML-KEM-768 + AES-256-GCM) - Fully implemented
+- ✅ **ZpClassical2** (ECDH-P256 + AES-256-GCM) - FIPS mode, fully implemented
+
+---
+
+## Specification Changelog
+
+### v1.0 (December 2025)
 
 Final release. Promoted from RC25 after 7 rounds of external review.
 
