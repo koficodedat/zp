@@ -57,6 +57,7 @@ criterion = "0.5"
 hex = "0.4"
 tracing = "0.1"
 rand = "0.8"
+twox-hash = "1.6"  # For XXH64 in Sync-Frame integrity
 
 # Pinned dependencies to avoid edition2024 requirement
 base64ct = "=1.6.0"

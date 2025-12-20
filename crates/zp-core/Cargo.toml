@@ -16,10 +16,15 @@ zp-crypto = { path = "../zp-crypto" }
 zeroize = { workspace = true }
 subtle = { workspace = true }
 
+# Crypto utilities
+sha2 = { workspace = true }
+rand = { workspace = true }
+
 # Utilities
 bytes = { workspace = true }
 thiserror = { workspace = true }
 hex = { workspace = true }
+twox-hash = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
