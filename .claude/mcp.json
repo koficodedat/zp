@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "zp-decision-bridge": {
+      "command": "node",
+      "args": ["./tools/zp-decision-bridge/dist/index.js"],
+      "env": {
+        "ZP_DECISIONS_DIR": "./docs/decisions"
+      }
+    }
+  }
+}

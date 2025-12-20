@@ -1,0 +1,172 @@
+# =============================================================================
+# zp Project .gitignore
+# =============================================================================
+
+# =============================================================================
+# Rust
+# =============================================================================
+
+# Build artifacts
+/target/
+**/target/
+
+# Cargo.lock - include for binaries, exclude for libraries
+# Since zp has both, we include it (binaries like zp-cli need reproducible builds)
+# Cargo.lock
+
+# Backup files from cargo fmt
+**/*.rs.bk
+
+# Coverage data
+*.profraw
+*.profdata
+coverage/
+lcov.info
+tarpaulin-report.html
+
+# Benchmark artifacts
+criterion/
+
+# Fuzzing artifacts
+fuzz/artifacts/
+fuzz/corpus/
+# Keep seed corpora if manually curated
+!fuzz/corpus/.gitkeep
+
+# =============================================================================
+# Node.js / TypeScript (for zp-decision-bridge MCP)
+# =============================================================================
+
+node_modules/
+**/node_modules/
+
+# pnpm
+pnpm-debug.log*
+
+# =============================================================================
+# zp-decision-bridge MCP (tools/zp-decision-bridge/)
+# =============================================================================
+
+# TypeScript build output
+tools/zp-decision-bridge/dist/
+
+# Local MCP testing/dev
+tools/zp-decision-bridge/.env
+tools/zp-decision-bridge/*.log
+
+# Note: docs/decisions/ and docs/decisions/pending/ are NOT ignored
+# Those contain actual DA decisions and should be committed
+
+# npm
+npm-debug.log*
+.npm
+
+# Yarn
+yarn-error.log
+.yarn/cache
+.yarn/unplugged
+.yarn/install-state.gz
+.pnp.*
+
+# TypeScript
+*.tsbuildinfo
+
+# =============================================================================
+# IDE / Editors
+# =============================================================================
+
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# JetBrains (CLion, IntelliJ, RustRover)
+.idea/
+*.iml
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Zed
+.zed/
+
+# =============================================================================
+# Operating Systems
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# =============================================================================
+# Project-Specific
+# =============================================================================
+
+# Local environment overrides
+.env
+.env.local
+.env.*.local
+
+# Secrets (should never be committed)
+*.pem
+*.key
+*.p12
+secrets/
+
+# Test outputs
+test-results/
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Generated documentation (rebuild from source)
+/docs/api/
+/target/doc/
+
+# Platform build artifacts
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# WASM build artifacts (regenerate with cargo build)
+pkg/
+*.wasm
+
+# FFI generated bindings (regenerate with uniffi)
+bindings/swift/generated/
+bindings/kotlin/generated/
+
+# =============================================================================
+# Keep directories with .gitkeep
+# =============================================================================
+
+# Allow empty directories needed for structure
+!**/.gitkeep
