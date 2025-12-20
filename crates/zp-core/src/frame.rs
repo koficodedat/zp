@@ -1203,4 +1203,170 @@ mod tests {
         };
         assert_ne!(integrity1, state2.compute_integrity());
     }
+
+    #[test]
+    fn test_parse_empty_input() {
+        // Empty input should fail
+        let result = Frame::parse(&[]);
+        assert!(result.is_err(), "Empty input should fail to parse");
+    }
+
+    #[test]
+    fn test_parse_truncated_magic() {
+        // Only 3 bytes (truncated magic number)
+        let result = Frame::parse(&[0x5A, 0x50, 0x43]);
+        assert!(result.is_err(), "Truncated magic should fail");
+    }
+
+    #[test]
+    fn test_parse_invalid_magic() {
+        // Invalid magic number
+        let result = Frame::parse(&[0xFF, 0xFF, 0xFF, 0xFF, 0x50]);
+        assert!(result.is_err(), "Invalid magic should fail");
+    }
+
+    #[test]
+    fn test_parse_unknown_frame_type() {
+        // Valid magic, invalid frame type
+        let data = [
+            0x5A, 0x50, 0x43, 0x48, // Magic (ZPCH)
+            0xFF, // Invalid frame type
+        ];
+        let result = Frame::parse(&data);
+        assert!(result.is_err(), "Unknown frame type should fail");
+    }
+
+    #[test]
+    fn test_parse_truncated_client_hello() {
+        // ClientHello magic + type, but truncated
+        let data = [
+            0x5A, 0x50, 0x43, 0x48, // Magic
+            0x50, // Frame type
+            0x01, // version_count = 1
+                  // Missing rest of frame
+        ];
+        let result = Frame::parse(&data);
+        assert!(result.is_err(), "Truncated ClientHello should fail");
+    }
+
+    #[test]
+    fn test_serialize_parse_roundtrip_all_frames() {
+        // Test roundtrip for all frame types
+        let frames = vec![
+            Frame::DataFrame {
+                stream_id: 1,
+                seq: 100,
+                flags: 0,
+                payload: vec![1, 2, 3, 4, 5],
+            },
+            Frame::WindowUpdate {
+                stream_id: 0,
+                window_increment: 1024,
+            },
+            Frame::ErrorFrame {
+                error_code: ErrorCode::HandshakeTimeout,
+            },
+        ];
+
+        for frame in frames {
+            let serialized = frame.serialize().expect("Serialization should succeed");
+            let parsed = Frame::parse(&serialized).expect("Parsing should succeed");
+
+            // Verify frame type matches
+            match (&frame, &parsed) {
+                (Frame::DataFrame { .. }, Frame::DataFrame { .. }) => {}
+                (Frame::WindowUpdate { .. }, Frame::WindowUpdate { .. }) => {}
+                (Frame::ErrorFrame { .. }, Frame::ErrorFrame { .. }) => {}
+                _ => panic!("Frame type mismatch after roundtrip"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_data_frame_with_large_payload() {
+        // Test DataFrame with large payload (close to max)
+        let large_data = vec![0xAA; 10000];
+        let frame = Frame::DataFrame {
+            stream_id: 5,
+            seq: 1000,
+            flags: 0,
+            payload: large_data.clone(),
+        };
+
+        let serialized = frame.serialize().expect("Large frame should serialize");
+        let parsed = Frame::parse(&serialized).expect("Large frame should parse");
+
+        match parsed {
+            Frame::DataFrame { payload, .. } => {
+                assert_eq!(payload.len(), 10000, "Data length should match");
+                assert_eq!(payload, large_data, "Data should match");
+            }
+            _ => panic!("Expected DataFrame"),
+        }
+    }
+
+    #[test]
+    fn test_window_update_zero_increment() {
+        // WindowUpdate with zero increment (edge case)
+        let frame = Frame::WindowUpdate {
+            stream_id: 0,
+            window_increment: 0,
+        };
+
+        let serialized = frame.serialize().expect("Should serialize");
+        let parsed = Frame::parse(&serialized).expect("Should parse");
+
+        match parsed {
+            Frame::WindowUpdate {
+                window_increment, ..
+            } => {
+                assert_eq!(window_increment, 0, "Window increment should be 0");
+            }
+            _ => panic!("Expected WindowUpdate"),
+        }
+    }
+
+    #[test]
+    fn test_sync_frame_multiple_streams() {
+        // Sync-Frame with multiple streams
+        let states = vec![
+            StreamState {
+                stream_id: 0,
+                global_seq: 100,
+                last_acked: 50,
+            },
+            StreamState {
+                stream_id: 2,
+                global_seq: 200,
+                last_acked: 150,
+            },
+            StreamState {
+                stream_id: 4,
+                global_seq: 300,
+                last_acked: 250,
+            },
+        ];
+
+        let frame = Frame::SyncFrame {
+            session_id: [0x11; 16],
+            streams: states.clone(),
+            flags: 0,
+        };
+
+        let serialized = frame.serialize().expect("Should serialize");
+        let parsed = Frame::parse(&serialized).expect("Should parse");
+
+        match parsed {
+            Frame::SyncFrame {
+                streams: parsed_states,
+                ..
+            } => {
+                assert_eq!(parsed_states.len(), 3, "Should have 3 streams");
+                assert_eq!(parsed_states[0].stream_id, 0);
+                assert_eq!(parsed_states[1].stream_id, 2);
+                assert_eq!(parsed_states[2].stream_id, 4);
+            }
+            _ => panic!("Expected SyncFrame"),
+        }
+    }
 }
