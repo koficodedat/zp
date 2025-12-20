@@ -165,6 +165,16 @@ bindings/swift/generated/
 bindings/kotlin/generated/
 
 # =============================================================================
+# Claude / Serena Agent
+# =============================================================================
+
+# Serena agent workspace
+.serena/
+
+# Claude settings (user-specific)
+.claude/settings.json
+
+# =============================================================================
 # Keep directories with .gitkeep
 # =============================================================================
 
