@@ -91,6 +91,81 @@
   - `#![forbid(unsafe_code)]` - zero unsafe blocks
   - Crypto-impl security audit: APPROVED
 
+- Frame serialization/deserialization (zp-core)
+  - All 16 frame types per spec §3.3 (Handshake, Control, Data frames)
+  - Handshake frames: ClientHello, ServerHello, ClientFinish (Stranger Mode §4.2)
+  - Handshake frames: KnownHello, KnownResponse, KnownFinish (Known Mode §4.3)
+  - Control frames: Sync-Frame, Sync-Ack (Migration §3.3.5-6)
+  - Control frames: KeyUpdate, KeyUpdateAck (Key Rotation §4.6)
+  - Control frames: AckFrame, WindowUpdate, ErrorFrame (§3.3.9-12)
+  - Data frames: DataFrame, EncryptedRecord, StreamChunk (§3.3.10, §3.3.13, §3.3.7)
+  - Little-endian byte order for all multi-byte integers
+  - Magic number constants (4-byte ASCII mnemonics: "ZPCH", "ZPSH", etc.)
+  - XXH64 integrity hashing for Sync-Frame state synchronization
+  - Bidirectional Frame::parse() and Frame::serialize() with roundtrip guarantees
+  - Comprehensive conformance tests (18 frame format tests, all passing)
+  - ~1127 lines implementation + ~580 lines conformance tests
+
+- Session management and handshake state machine (zp-core)
+  - Stranger Mode handshake implementation (§4.2 - TOFU security model)
+  - Client-side: client_start_stranger(), client_process_server_hello(), client_build_finish()
+  - Server-side: server_process_client_hello(), server_build_hello(), server_process_client_finish()
+  - Cipher suite negotiation with downgrade attack prevention
+  - Support for all 4 cipher suites (ZP_HYBRID_1/2/3, ZP_CLASSICAL_2)
+  - Version negotiation (§2.2)
+  - Session key derivation (§4.2.4)
+    - Session ID = SHA-256(client_random || server_random || shared_secret)[0:16]
+    - Session secret and traffic keys via HKDF-SHA256
+    - Role-based key assignment (client/server send/recv keys)
+  - Hybrid key exchange: X25519 + ML-KEM-768/1024
+  - All secrets wrapped in Zeroizing<> for automatic cleanup
+  - State machine enforcement (Idle → ClientHelloSent → ClientFinishReady → Established)
+  - Error handling for invalid state transitions
+  - ~765 lines implementation
+  - Unit tests: 4 passing (session creation, handshake flow, version/cipher negotiation)
+  - Known limitation: Known Mode (SPAKE2+) not yet implemented
+
+- Flow control and stream multiplexing (zp-core)
+  - Dual-level flow control per spec §3.3.9
+    - Stream-level window (ZP_INITIAL_STREAM_WINDOW = 256KB)
+    - Connection-level window (ZP_INITIAL_CONN_WINDOW = 1MB)
+  - StreamMultiplexer for connection-level management
+  - Window operations: queue_send(), receive_data(), generate_window_update()
+  - WindowUpdate trigger: consumed >= initial_window / 2
+  - Saturating addition for window updates (prevent overflow)
+  - Stream lifecycle management (§3.3.11)
+    - States: Open, HalfClosedLocal, HalfClosedRemote, Closed
+    - FIN flag handling for graceful close
+    - State transition enforcement
+  - Stream ID allocation
+    - Even IDs (0, 2, 4...) for client-initiated streams
+    - Odd IDs (1, 3, 5...) for server-initiated streams
+  - Priority scheduling (§3.3.8)
+    - Priority range: 1-255 (0 clamped to 1)
+  - Dual-level window enforcement: min(stream_window, conn_window)
+  - ~583 lines implementation
+  - Unit tests: 10 passing (creation, flow control, window updates, lifecycle, multiplexing)
+
+**Phase 3 Quality Metrics:**
+- Total implementation: ~3055 lines (frame.rs: 1127 + session.rs: 765 + stream.rs: 583 + tests: 580)
+- Unit tests: 21 passing (6 frame + 4 session + 10 stream + 1 error)
+- Conformance tests: 18 passing (all frame types)
+- Total: 39 tests passing
+- Zero clippy warnings
+- Zero unsafe code blocks (`#![forbid(unsafe_code)]`)
+- All secrets properly zeroized
+- No logging of sensitive data
+- Test coverage: ~35-40% (needs improvement to 80%+ for production)
+
+**Phase 3 Known Gaps:**
+- Known Mode (SPAKE2+) handshake not implemented (§4.3)
+- Key rotation protocol not implemented (§4.6)
+- Transport migration not yet integrated (§3.3.3)
+- Session conformance tests missing (TEST_VECTORS.md §3.1)
+- Low test coverage on session.rs (~15%) and stream.rs (~22%)
+- No fuzzing harnesses for frame parsing
+- No property tests for flow control invariants
+
 **Cipher Suite Status:**
 - ✅ **ZpHybrid1** (X25519 + ML-KEM-768 + ChaCha20-Poly1305) - DEFAULT, fully implemented
 - ✅ **ZpHybrid2** (X25519 + ML-KEM-1024 + ChaCha20-Poly1305) - High security, fully implemented

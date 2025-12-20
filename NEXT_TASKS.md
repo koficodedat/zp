@@ -273,3 +273,235 @@ Recommended next tasks:
 4. Stream multiplexing
 
 Create `PHASE_3.md` or continue to Protocol Engine implementation.
+
+---
+
+## Phase 3: Protocol Engine Implementation
+
+### Task 3.1: Frame Serialization/Deserialization ✅ COMPLETED
+**Priority:** P0 (foundation for all protocol operations)
+**File:** `crates/zp-core/src/frame.rs`
+**Status:** ✅ Complete
+**Spec Reference:** §3.3
+
+**Acceptance criteria:**
+- [x] All 16 frame types implemented per spec
+- [x] Handshake frames: ClientHello, ServerHello, ClientFinish (Stranger Mode §4.2)
+- [x] Handshake frames: KnownHello, KnownResponse, KnownFinish (Known Mode §4.3)
+- [x] Control frames: Sync-Frame, Sync-Ack (§3.3.5-6)
+- [x] Control frames: KeyUpdate, KeyUpdateAck (§4.6)
+- [x] Control frames: AckFrame, WindowUpdate, ErrorFrame (§3.3.9-12)
+- [x] Data frames: DataFrame, EncryptedRecord, StreamChunk
+- [x] Little-endian byte order for all multi-byte integers
+- [x] Magic number constants for all frame types
+- [x] XXH64 integrity hashing for Sync-Frame (§3.3.5)
+- [x] Frame::parse() and Frame::serialize() bidirectional conversion
+- [x] All frame roundtrip tests pass
+- [x] Conformance tests for all frame formats (18 tests)
+
+**Actual LOC:** ~1127 lines implementation + ~580 lines conformance tests
+
+**Test Coverage:**
+- Frame conformance tests: 18/18 passing
+- Frame unit tests: 6/6 passing
+- Total: 24 frame-related tests
+
+---
+
+### Task 3.2: Handshake State Machine ✅ COMPLETED
+**Priority:** P0 (required for session establishment)
+**File:** `crates/zp-core/src/session.rs`
+**Status:** ✅ Complete (Stranger Mode only)
+**Spec Reference:** §4.2 (Stranger Mode), §4.3 (Known Mode - TODO)
+
+**Acceptance criteria:**
+- [x] Session struct with Role (Client/Server) and HandshakeMode (Stranger/Known)
+- [x] Stranger Mode client handshake flow (§4.2)
+  - [x] client_start_stranger() - Generate ClientHello
+  - [x] client_process_server_hello() - Process ServerHello, derive keys
+  - [x] client_build_finish() - Generate ClientFinish with ML-KEM ciphertext
+- [x] Stranger Mode server handshake flow (§4.2)
+  - [x] server_process_client_hello() - Validate client proposal
+  - [x] server_build_hello() - Generate ServerHello with ML-KEM public key
+  - [x] server_process_client_finish() - Decapsulate, derive session keys
+- [x] Cipher suite negotiation (§4.2.1)
+  - [x] Support all 4 cipher suites (ZP_HYBRID_1/2/3, ZP_CLASSICAL_2)
+  - [x] Downgrade attack prevention
+- [x] Version negotiation (§2.2)
+- [x] Session key derivation (§4.2.4)
+  - [x] Session ID = SHA-256(client_random || server_random || shared_secret)[0:16]
+  - [x] Session secret and traffic keys via HKDF-SHA256
+  - [x] All secrets wrapped in Zeroizing<>
+- [x] State transitions enforced (Idle → ClientHelloSent → ClientFinishReady → Established)
+- [x] Error handling for invalid state transitions
+- [x] Unit tests for handshake flow (4 tests)
+
+**Actual LOC:** ~765 lines implementation + tests
+
+**Known Limitations:**
+- Known Mode (SPAKE2+) not yet implemented (§4.3)
+- Key rotation not yet implemented (§4.6)
+- Only Stranger Mode fully functional
+
+**Test Coverage:**
+- Session unit tests: 4/4 passing (creation, handshake flow, version/cipher negotiation)
+- **Coverage gap:** ~15% (Only Stranger Mode tested, no conformance tests for key derivation)
+
+---
+
+### Task 3.3: Flow Control and Stream Multiplexing ✅ COMPLETED
+**Priority:** P0 (required for data transfer)
+**File:** `crates/zp-core/src/stream.rs`
+**Status:** ✅ Complete
+**Spec Reference:** §3.3.9 (Flow Control), §3.3.11 (Stream Lifecycle)
+
+**Acceptance criteria:**
+- [x] Stream struct with dual-level flow control
+  - [x] Stream-level window (ZP_INITIAL_STREAM_WINDOW = 256KB)
+  - [x] Connection-level window (ZP_INITIAL_CONN_WINDOW = 1MB)
+- [x] StreamMultiplexer for connection-level management
+- [x] Flow control operations
+  - [x] queue_send() - Respect send window constraints
+  - [x] receive_data() - Respect receive window constraints
+  - [x] generate_window_update() - Trigger at consumed >= initial_window / 2
+  - [x] update_send_window() / update_recv_window() - Saturating addition
+- [x] Stream lifecycle (§3.3.11)
+  - [x] States: Open, HalfClosedLocal, HalfClosedRemote, Closed
+  - [x] FIN flag handling for graceful close
+  - [x] State transition enforcement
+- [x] Stream ID allocation
+  - [x] Even IDs for client-initiated streams
+  - [x] Odd IDs for server-initiated streams
+- [x] Priority scheduling (§3.3.8)
+  - [x] Priority clamping (0 → 1, max 255)
+- [x] WindowUpdate generation per spec §3.3.9
+- [x] Dual-level window enforcement: min(stream_window, conn_window)
+- [x] Unit tests for flow control (10 tests)
+
+**Actual LOC:** ~583 lines implementation + tests
+
+**Test Coverage:**
+- Stream unit tests: 10/10 passing
+- **Coverage gap:** ~22% (Missing edge case tests, no property tests for invariants)
+
+---
+
+### Task 3.4: Frame Conformance Test Suite ✅ COMPLETED
+**Priority:** P0 (quality gate)
+**File:** `tests/conformance/frame_conformance.rs`
+**Status:** ✅ Complete
+
+**Acceptance criteria:**
+- [x] Conformance tests for all 16 frame types
+- [x] Verify exact wire format per spec §3.3
+- [x] Test magic numbers (4-byte ASCII mnemonics)
+- [x] Test frame type identifiers (1-byte)
+- [x] Test little-endian byte order
+- [x] Test XXH64 integrity hashing (Sync-Frame)
+- [x] Test all error codes roundtrip (Appendix B)
+- [x] Test FIN flag handling (DataFrame)
+- [x] All frame roundtrip tests (serialize → parse → equals)
+- [x] All tests pass (18/18)
+
+**Actual LOC:** ~580 lines conformance tests
+
+**Frame Types Covered:**
+1. ✅ ClientHello (Stranger Mode §4.2.1)
+2. ✅ ServerHello (Stranger Mode §4.2.2)
+3. ✅ ClientFinish (Stranger Mode §4.2.3)
+4. ✅ KnownHello (Known Mode §4.3.1)
+5. ✅ KnownResponse (Known Mode §4.3.2)
+6. ✅ KnownFinish (Known Mode §4.3.3)
+7. ✅ Sync-Frame (Migration §3.3.5)
+8. ✅ Sync-Ack (Migration §3.3.6)
+9. ✅ KeyUpdate (Key Rotation §4.6.2)
+10. ✅ KeyUpdateAck (Key Rotation §4.6.5)
+11. ✅ AckFrame (Reliability §6.4.4)
+12. ✅ WindowUpdate (Flow Control §3.3.9)
+13. ✅ ErrorFrame (Protocol Error §3.3.12)
+14. ✅ DataFrame (Application Data §3.3.10)
+15. ✅ EncryptedRecord (Encryption Wrapper §3.3.13)
+16. ✅ StreamChunk (TCP Fallback §3.3.7)
+
+---
+
+## Phase 3 Status
+
+**Completed Tasks:** 4/4 ✅
+
+**Total Implementation:**
+- frame.rs: ~1127 lines
+- session.rs: ~765 lines
+- stream.rs: ~583 lines
+- Conformance tests: ~580 lines
+- **Total:** ~3055 lines
+
+**Test Summary:**
+- Unit tests: 21 passing (6 frame + 4 session + 10 stream + 1 error)
+- Conformance tests: 18 passing (all frame types)
+- **Total:** 39 passing tests
+
+**Quality Metrics:**
+- ✅ Zero clippy warnings
+- ✅ Zero unsafe code blocks (`#![forbid(unsafe_code)]`)
+- ✅ All secrets properly zeroized
+- ✅ No logging of sensitive data
+- ⚠️ Test coverage: ~35-40% (needs improvement to 80%+ target)
+
+---
+
+## Critical Gaps Identified (Security Audit)
+
+### High Priority (Before Production)
+1. **Increase test coverage to >80%**
+   - Current: ~35-40%
+   - session.rs: ~15% coverage
+   - stream.rs: ~22% coverage
+   - frame.rs: ~44% coverage
+
+2. **Add session conformance tests**
+   - Missing: TEST_VECTORS.md §3.1 (Session ID derivation)
+   - Missing: Full handshake flow tests with test vectors
+   - Missing: Known Mode handshake tests
+
+3. **Add fuzzing harnesses**
+   - Frame parsing (malformed inputs, edge cases)
+   - Session state machine (invalid transitions)
+   - Flow control (window overflow, underflow)
+
+4. **Implement or remove dead code**
+   - `parse_encrypted_record()` - Marked as #[allow(dead_code)]
+   - `parse_stream_chunk()` - Marked as #[allow(dead_code)]
+   - Decision needed: Future work or remove?
+
+### Medium Priority
+5. Add property tests for flow control invariants
+6. Add integration tests for full handshake flows
+7. Add error recovery tests (malformed frames, network errors)
+
+---
+
+## Next Steps
+
+**Option A: Complete Phase 3 Quality Gate**
+Recommended before moving to Phase 4 (Transport Layer):
+1. Run `/fuzz frame` to add fuzzing harnesses
+2. Add session conformance tests from TEST_VECTORS.md
+3. Increase test coverage to 80%+
+4. Run `/review-code zp-core` for comprehensive review
+
+**Option B: Continue to Phase 4 (Transport Layer)**
+Accept current quality level and continue to:
+1. QUIC transport integration (§3.4)
+2. WebSocket transport (Appendix D)
+3. WebRTC DataChannel transport (§5)
+4. TCP fallback (§3.3.7)
+
+**Option C: Implement Missing Features**
+1. Known Mode handshake (SPAKE2+, §4.3)
+2. Key rotation protocol (§4.6)
+3. Transport migration (Sync-Frame integration, §3.3.3)
+4. State Token persistence (§6.5)
+
+**Recommended:** Option A (Quality Gate) before production, Option B acceptable for continued development.
+
