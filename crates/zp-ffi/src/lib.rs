@@ -9,6 +9,8 @@
 
 #![warn(missing_docs)]
 
+use zp_core::session::{HandshakeMode, Role};
+
 // TODO: Define UniFFI interface in zp.udl
 
 /// FFI error type.
@@ -40,9 +42,11 @@ pub struct ZpSession {
 
 impl ZpSession {
     /// Create a new session.
+    ///
+    /// Defaults to Client role with Stranger mode handshake.
     pub fn new() -> Self {
         Self {
-            _inner: zp_core::Session::new(),
+            _inner: zp_core::Session::new(Role::Client, HandshakeMode::Stranger),
         }
     }
 
