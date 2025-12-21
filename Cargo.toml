@@ -8,6 +8,7 @@ members = [
     "crates/zp-ffi",
     "tests/conformance",
 ]
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "1.0.0"
