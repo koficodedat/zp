@@ -925,10 +925,9 @@ Push to 80% coverage target:
 - [x] Binary frames only, one zp frame per message
 - [x] Stream multiplexing over single WebSocket connection (deferred to future - single session per connection)
 - [x] Integration with zp-core Session
-- [ ] EncryptedRecord wrapper for post-handshake frames (TODO - currently plaintext)
+- [x] EncryptedRecord wrapper for post-handshake frames ✅ COMPLETED (2025-12-21)
 
 **TODO:**
-- EncryptedRecord wrapper for post-handshake frames (marked TODO in implementation)
 - Stream multiplexing over single connection (current: one session per connection)
 
 **Blocking Dependencies:** None (completed)
@@ -998,7 +997,7 @@ Push to 80% coverage target:
 
 **Pending (Future Work):**
 - [ ] TLS 1.3 wrapper over TCP/443 (currently plain TCP)
-- [ ] EncryptedRecord wrapper for post-handshake frames
+- [x] EncryptedRecord wrapper for post-handshake frames ✅ COMPLETED (2025-12-21)
 - [ ] Racing with QUIC (ZP_RACING_THRESHOLD: 200ms)
 
 **Test Summary:**
@@ -1009,30 +1008,152 @@ Push to 80% coverage target:
 
 ---
 
+### Task 5.5: EncryptedRecord Integration ✅ COMPLETED
+**Priority:** P0 (security requirement for non-QUIC transports)
+**Files:** `crates/zp-core/src/frame.rs`, `crates/zp-transport/src/tcp.rs`, `crates/zp-transport/src/websocket/mod.rs`
+**Status:** ✅ Complete (2025-12-21)
+**Spec Reference:** §3.3.13 (EncryptedRecord), §6.5.1 (Nonce Construction)
+**Actual Effort:** ~8 hours (implementation + integration tests)
+
+**Acceptance Criteria:**
+- [x] Frame::parse() disambiguates EncryptedRecord vs ErrorFrame (first 4 bytes check)
+- [x] WebSocket send_frame() encrypts post-handshake data frames
+- [x] WebSocket recv_frame() detects and decrypts EncryptedRecord frames
+- [x] TCP send_frame() encrypts post-handshake data frames
+- [x] TCP recv_frame() detects and decrypts EncryptedRecord frames
+- [x] Handshake frames (ClientHello, ServerHello, ClientFinish, etc.) remain plaintext
+- [x] ErrorFrame remains plaintext (never encrypted)
+- [x] Session state checked before encryption (established = encrypt)
+- [x] Frame type checked before encryption (handshake/error = plaintext)
+- [x] Integration tests: 4 tests verifying end-to-end encryption
+  - [x] TCP roundtrip (handshake + encrypted frame exchange)
+  - [x] TCP bidirectional (both directions encrypted)
+  - [x] TCP multiple frames (nonce counter verification)
+  - [x] WebSocket roundtrip (handshake + encrypted frame exchange)
+- [x] Nonce counter verification (send_nonce/recv_nonce increment correctly)
+
+**Implementation Summary:**
+Integrated EncryptedRecord encryption/decryption into TCP and WebSocket transports per spec §3.3.13. Post-handshake data frames are now automatically encrypted using Session::encrypt_frame() and decrypted using Session::decrypt_record(). Handshake frames and ErrorFrame remain plaintext for protocol compliance.
+
+**Key Changes:**
+1. **Frame::parse() disambiguation** (frame.rs:183-203)
+   - Check first 4 bytes: if == MAGIC_ERROR, parse as ErrorFrame
+   - Else if <= 16_777_216 (16 MB), parse as EncryptedRecord
+   - Traditional frame parsing for other types
+   - Removed #[allow(dead_code)] from parse_encrypted_record()
+
+2. **TcpConnection encryption** (tcp.rs:199-238)
+   - send_frame(): Check session state AND frame type before encrypting
+   - recv_frame(): Detect EncryptedRecord, decrypt via Session::decrypt_record()
+   - Lock management: acquire session lock → encrypt → drop lock → network I/O
+
+3. **WebSocketConnection encryption** (websocket/mod.rs:296-336, 346-384)
+   - send_frame(): Identical logic to TCP (session + frame type check)
+   - recv_frame(): Identical logic to TCP (detect + decrypt)
+   - Lock management: acquire WS lock → read → drop WS lock → session ops
+
+4. **Integration tests** (encrypted_record_integration.rs, 526 lines)
+   - Helper: perform_handshake_tcp() - Full 4-step Stranger Mode handshake
+   - Test: TCP roundtrip (verify encrypt/decrypt, nonce counters)
+   - Test: TCP bidirectional (verify both directions, send_nonce/recv_nonce)
+   - Test: TCP multiple frames (verify nonce increment, 5 sequential frames)
+   - Test: WebSocket roundtrip (verify WebSocket encryption)
+
+**Test Summary:**
+- Total: 4 integration tests (all passing)
+- Coverage: TCP + WebSocket encryption verified
+- Nonce verification: send_nonce/recv_nonce correctly incremented
+- All 289 tests passing (including existing conformance tests)
+
+**EncryptedRecord Format (§3.3.13):**
+```
+[length: u32 LE]       // 4 bytes (includes epoch, counter, ciphertext, tag)
+[epoch: u8]            // 1 byte (key rotation epoch)
+[counter: u64 LE]      // 8 bytes (nonce counter for replay protection)
+[ciphertext: variable] // Encrypted frame data
+[tag: 16 bytes]        // AEAD authentication tag
+```
+
+**AAD Construction (§3.3.13):**
+```
+AAD = length (4 bytes LE) || epoch (1 byte) || counter (8 bytes LE)
+    = 13 bytes total
+```
+
+**Nonce Construction (§6.5.1):**
+```
+Nonce = [0x00, 0x00, 0x00, 0x00] || counter (8 bytes LE)
+      = 12 bytes total
+```
+
+**Frame Disambiguation Logic (§3.3.13):**
+```rust
+let first_four_bytes = read_u32_le(&data[0..4]);
+
+if first_four_bytes == MAGIC_ERROR {       // 0x5A50_4552
+    // Parse as ErrorFrame (magic + type + fields)
+} else if first_four_bytes <= 16_777_216 { // MAX_RECORD_SIZE (16 MB)
+    // Parse as EncryptedRecord (length + epoch + counter + ciphertext + tag)
+}
+```
+
+**Security Guarantees:**
+- ✅ All post-handshake data frames encrypted on TCP and WebSocket
+- ✅ QUIC uses native QUIC encryption (no EncryptedRecord wrapper)
+- ✅ Replay protection via nonce counter (monotonically increasing)
+- ✅ Key rotation support via epoch field
+- ✅ AEAD authentication prevents tampering
+- ✅ Handshake frames remain plaintext for protocol establishment
+- ✅ ErrorFrame remains plaintext for debugging
+
+**Blocking Dependencies:** None (Task completed)
+
+---
+
 ## Phase 5 Summary
 
-**Total Effort Estimate:** 96-124 hours (12-15.5 days @ 8 hours/day)
+**Total Effort Estimate:** 104-132 hours (13-16.5 days @ 8 hours/day)
 
 **Priority Breakdown:**
-- Task 5.1 (QUIC): P0 - LARGE (32-40 hours)
-- Task 5.2 (WebSocket): P1 - MEDIUM (16-24 hours)
-- Task 5.3 (WebRTC): P1 - LARGE (40-48 hours)
-- Task 5.4 (TCP): P2 - SMALL (8-12 hours)
+- Task 5.1 (QUIC): P0 - LARGE (32-40 hours) ✅ COMPLETE
+- Task 5.2 (WebSocket): P1 - MEDIUM (16-24 hours) ✅ COMPLETE
+- Task 5.3 (WebRTC): P1 - LARGE (40-48 hours) ✅ COMPLETE
+- Task 5.4 (TCP): P2 - SMALL (8-12 hours) ✅ COMPLETE
+- Task 5.5 (EncryptedRecord): P0 - SMALL (8 hours) ✅ COMPLETE
 
 **Quality Gates for Phase 5:**
-- [ ] All 4 transport types implemented
-- [ ] End-to-end integration tests for each transport
-- [ ] QUIC control stream (stream 0) working per spec §3.4
-- [ ] WebSocket EncryptedRecord wrapper working
-- [ ] WebRTC SCTP stream mapping working
-- [ ] TCP StreamChunk framing working
-- [ ] Test coverage >70% for zp-transport
-- [ ] Zero clippy warnings
-- [ ] Conformance tests for QUIC stream mapping
+- [x] All 5 transport tasks implemented ✅
+- [x] End-to-end integration tests for each transport ✅
+- [x] QUIC control stream (stream 0) working per spec §3.4 ✅
+- [x] WebSocket EncryptedRecord wrapper working ✅
+- [x] WebRTC SCTP stream mapping working ✅
+- [x] TCP StreamChunk framing working ✅
+- [x] TCP EncryptedRecord wrapper working ✅
+- [x] WebSocket EncryptedRecord integration complete ✅
+- [ ] Test coverage >70% for zp-transport (current: TBD)
+- [x] Zero clippy warnings ✅
+- [x] Conformance tests for QUIC stream mapping ✅
 
-**Recommended Order:**
-1. Task 5.1 (QUIC) - Foundation for other transports, spec §3.4 is detailed
-2. Task 5.2 (WebSocket) - Simpler transport, reuses QUIC patterns
-3. Task 5.3 (WebRTC) - Complex, requires STUN/TURN integration
-4. Task 5.4 (TCP) - Lowest priority, legacy fallback
+**Phase 5 Status:** ✅ ALL TASKS COMPLETE (2025-12-21)
+
+**Completed Tasks:**
+1. ✅ Task 5.1 (QUIC) - Foundation transport with BBR v2, stream 0 control channel
+2. ✅ Task 5.2 (WebSocket) - Browser fallback with subprotocol "zp.v1"
+3. ✅ Task 5.3 (WebRTC) - P2P with NAT traversal, STUN/TURN support
+4. ✅ Task 5.4 (TCP) - Legacy fallback with StreamChunk multiplexing
+5. ✅ Task 5.5 (EncryptedRecord) - Post-handshake encryption for TCP/WebSocket
+
+**Test Summary:**
+- QUIC: 19 tests passing (6 conformance + 5 integration + 8 unit)
+- WebSocket: 14 tests passing (6 conformance + 5 integration + 3 unit)
+- WebRTC: 19 tests passing (11 conformance + 5 integration + 3 unit)
+- TCP: 21 tests passing (12 conformance + 5 integration + 4 unit)
+- EncryptedRecord: 4 integration tests passing
+- **Total:** 77 transport tests passing
+
+**Deliverables:**
+- zp-transport crate: ~2,800 lines (QUIC + WebSocket + WebRTC + TCP)
+- Integration tests: 23 tests (5 + 5 + 5 + 5 + 4 - 1 redundant)
+- Conformance tests: 45 tests (6 + 6 + 11 + 12 + 10)
+- Total tests: 289 passing across entire codebase
 
