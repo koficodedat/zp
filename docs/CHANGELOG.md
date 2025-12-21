@@ -11,6 +11,17 @@
 ### Unreleased
 
 **Added:**
+- OPAQUE password-authenticated key exchange (zp-crypto) **[IN PROGRESS]**
+  - RFC 9807 conformance using opaque-ke v3.0 (NCC Group audited, June 2021)
+  - Replaces SPAKE2+ per DA-0001 (2025-12-20): no audited SPAKE2+ Rust implementation
+  - Security: Server never learns password (only OPRF output), strictly stronger than SPAKE2+
+  - Registration phase: 4-step flow (start → response → finalize → complete)
+  - Login phase: 4-step flow (start → response → finalize → complete)
+  - Hybrid with ML-KEM: OPAQUE session_key encrypts ML-KEM exchange (like SPAKE2+ before)
+  - File: `crates/zp-crypto/src/pake.rs` (Ristretto255 cipher suite)
+  - Status: Initial wrapper created, needs API fixes for compilation
+  - Spec impact: §4.3 rewrite required (mark as v1.1 per DA-0001)
+  - Related: docs/decisions/DA-0001.md (full escalation + resolution)
 - X25519 key exchange implementation (zp-crypto)
   - RFC 7748 §6.1 conformance with test vectors
   - Secure key generation using CSPRNG

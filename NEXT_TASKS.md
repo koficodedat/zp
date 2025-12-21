@@ -537,40 +537,55 @@ All five quality gate tasks completed successfully:
 
 **Status:** 🟡 PLANNED (P1 items from code review)
 
-### Task 4.1: Known Mode Handshake (SPAKE2+)
+### Task 4.1: Known Mode Handshake (OPAQUE) 🟡 IN PROGRESS
 **Priority:** P1 (second authentication mode per spec)
-**File:** `crates/zp-core/src/session.rs`
-**Status:** 🔲 Planned
-**Spec Reference:** §4.3
-**Effort Estimate:** LARGE (40-60 hours)
+**File:** `crates/zp-crypto/src/pake.rs`, `crates/zp-core/src/session.rs`
+**Status:** 🟡 In Progress (DA-0001 resolved, implementation started)
+**Spec Reference:** §4.3 (v1.1 rewrite required per DA-0001)
+**Effort Estimate:** LARGE (32-40 hours per DA-0001)
 
-**Current Gap:**
-Session implementation only supports Stranger Mode (X25519/ML-KEM hybrid KEX). Known Mode uses SPAKE2+ password-authenticated key exchange for trusted peers with shared secrets.
+**DA-0001 Decision (2025-12-20):** Change spec §4.3 from SPAKE2+ to OPAQUE
+- **Rationale:** No audited SPAKE2+ Rust implementation exists; opaque-ke is NCC Group audited (2021)
+- **Protocol:** OPAQUE (RFC 9807) replaces SPAKE2+ (RFC 9383)
+- **Security:** Strictly stronger properties than SPAKE2+ (server never learns password)
+- **Spec Impact:** Mark as v1.1 candidate (§4.3 rewrite, new test vectors)
+
+**Current Progress:**
+- [x] DA-0001 escalation and resolution
+- [x] opaque-ke v3.0 dependency added to Cargo.toml
+- [x] Initial pake.rs wrapper created (needs API fixes)
+- [ ] Fix opaque-ke API usage (compilation errors)
+- [ ] Update KnownHello/KnownResponse/KnownFinish frames for OPAQUE
+- [ ] Implement Session Known Mode methods
+- [ ] Add OPAQUE+ML-KEM key derivation
+- [ ] Generate OPAQUE test vectors
+- [ ] Add conformance tests
+- [ ] Draft §4.3 spec rewrite
+- [ ] crypto-impl agent review
 
 **Acceptance criteria:**
-- [ ] SPAKE2+ implementation in zp-crypto (or use external crate)
-- [ ] Session::known_mode_client_start() - Generate KnownHello with SPAKE2+ message
-- [ ] Session::known_mode_server_process_hello() - Verify SPAKE2+ message
-- [ ] Session::known_mode_client_process_response() - Derive shared secret
-- [ ] Session::known_mode_server_build_response() - Generate KnownResponse
-- [ ] Session::known_mode_client_build_finish() - Generate KnownFinish with verification
-- [ ] Session key derivation per spec §4.3.4
-  - Session secret = HKDF(spake2_shared_secret, salt=client_random || server_random, info="zp-session-secret")
-  - Session keys via derive_session_keys_known()
-- [ ] Conformance tests from TEST_VECTORS.md (if available)
-- [ ] Password strength enforcement (minimum entropy requirements)
-- [ ] Downgrade attack prevention (Known → Stranger attack detection)
-- [ ] Agent: crypto-impl reviews SPAKE2+ integration
+- [x] OPAQUE implementation via opaque-ke crate (NCC audited)
+- [ ] Registration flow: `registration_start() → response() → finalize() → complete()`
+- [ ] Login flow: `login_start() → response() → finalize() → complete()`
+- [ ] Session::known_mode_client_login_start() - Generate KnownHello with CredentialRequest
+- [ ] Session::known_mode_server_login_process() - Process request, generate CredentialResponse
+- [ ] Session::known_mode_client_login_finish() - Derive session_key + ML-KEM exchange
+- [ ] Hybrid key derivation: HKDF(opaque_session_key || mlkem_shared, ...)
+- [ ] Conformance tests from updated TEST_VECTORS.md §9.2
+- [ ] ZP_PAKE_SUITE parameter (OPAQUE as default per DA-0001)
+- [ ] crypto-impl agent review
 
-**Implementation Steps:**
-1. Research SPAKE2+ Rust implementations (RustCrypto/spake2, evaluate security audit status)
-2. Integrate SPAKE2+ into zp-crypto with Zeroizing<> wrapper
-3. Implement KnownHello/KnownResponse/KnownFinish frame handlers
-4. Add Known Mode state machine transitions
-5. Write conformance tests (if TEST_VECTORS.md has Known Mode vectors)
-6. Security review with crypto-impl agent
+**Implementation Strategy:**
+1. Fix opaque-ke API usage in pake.rs (CipherSuite, correct parameter types)
+2. Update Known Mode frames to carry OPAQUE messages (preserve frame names per DA-0001)
+3. Implement Session registration + login methods
+4. Hybrid OPAQUE + ML-KEM: encrypt ML-KEM exchange with OPAQUE session_key
+5. Key derivation: `session_secret = HKDF(opaque_key || mlkem_shared, ...)`
+6. Generate OPAQUE test vectors, update TEST_VECTORS.md §9.2
+7. Conformance tests for registration + login flows
+8. Draft §4.3 rewrite (can parallel with implementation)
 
-**Blocking Dependencies:** None (can proceed in parallel with other tasks)
+**Blocking Dependencies:** None (opaque-ke dependency resolved)
 
 **Related Spec Sections:**
 - §4.3: Known Mode Handshake Protocol
