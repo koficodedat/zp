@@ -25,6 +25,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use zp_core::session::{HandshakeMode, Role};
+use zp_core::stream::ZP_INITIAL_CONN_WINDOW;
 use zp_core::{Frame, Session};
 
 #[cfg(test)]
@@ -244,12 +245,15 @@ impl QuicConnection {
             Error::ConnectionFailed(format!("Failed to open control stream: {}", e))
         })?;
 
-        let control_stream = QuicStream::new(0, send, recv, true);
+        let mut control_stream = QuicStream::new(0, send, recv, true);
 
         // Send initial WindowUpdate per spec §3.4
         // WindowUpdate(stream_id=0, increment=ZP_INITIAL_CONN_WINDOW)
-        // TODO: Send WindowUpdate frame
-        // For now, just store the control stream
+        let window_update = Frame::WindowUpdate {
+            stream_id: 0,
+            window_increment: ZP_INITIAL_CONN_WINDOW as u64,
+        };
+        control_stream.send_frame(&window_update).await?;
 
         Ok(Self {
             connection,
@@ -270,7 +274,14 @@ impl QuicConnection {
             Error::ConnectionFailed(format!("Failed to accept control stream: {}", e))
         })?;
 
-        let control_stream = QuicStream::new(0, send, recv, true);
+        let mut control_stream = QuicStream::new(0, send, recv, true);
+
+        // Send initial WindowUpdate per spec §3.4
+        let window_update = Frame::WindowUpdate {
+            stream_id: 0,
+            window_increment: ZP_INITIAL_CONN_WINDOW as u64,
+        };
+        control_stream.send_frame(&window_update).await?;
 
         Ok(Self {
             connection,
@@ -296,8 +307,8 @@ impl QuicConnection {
             .map_err(|e| Error::ConnectionFailed(format!("Failed to open stream: {}", e)))?;
 
         // Stream ID is allocated by QUIC automatically
-        // quinn guarantees: client gets even IDs, server gets odd IDs
-        let stream_id = send.id().index(); // Get the QUIC stream ID
+        // quinn guarantees: client gets even IDs (0, 4, 8...), server gets odd IDs (1, 5, 9...)
+        let stream_id = u64::from(send.id()); // Get the QUIC stream ID
 
         Ok(QuicStream::new(stream_id, send, recv, false))
     }
@@ -314,7 +325,7 @@ impl QuicConnection {
             .await
             .map_err(|e| Error::ConnectionFailed(format!("Failed to accept stream: {}", e)))?;
 
-        let stream_id = send.id().index();
+        let stream_id = u64::from(send.id());
 
         // Validate stream ID is not 0 (control stream already initialized)
         if stream_id == 0 {
