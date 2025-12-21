@@ -287,12 +287,40 @@ pub struct AckRange {
 
 impl Frame {
     /// Parse a frame from bytes.
+    ///
+    /// # Frame Disambiguation (§3.3.13)
+    ///
+    /// On non-QUIC transports, this function handles the disambiguation between
+    /// EncryptedRecord and ErrorFrame:
+    /// - If first 4 bytes == ErrorFrame magic (0x5A50_4552): parse as ErrorFrame
+    /// - Otherwise: interpret first 4 bytes as EncryptedRecord length field
+    ///
+    /// For standard frames (handshake, control), this function expects the
+    /// traditional 5-byte header (4-byte magic + 1-byte type).
     pub fn parse(data: &[u8]) -> Result<Self> {
         if data.len() < 5 {
             return Err(Error::InsufficientData(5));
         }
 
-        let magic = read_u32_le(&data[0..4]);
+        let first_four_bytes = read_u32_le(&data[0..4]);
+
+        // Frame disambiguation per spec §3.3.13:
+        // Check if this is ErrorFrame magic
+        if first_four_bytes == MAGIC_ERROR {
+            // Traditional frame parsing (magic + type)
+            let frame_type = data[4];
+            if frame_type == TYPE_ERROR {
+                return Self::parse_error_frame(&data[5..]);
+            }
+            // If magic matches but type doesn't, fall through to error
+        } else if first_four_bytes <= 16_777_216 {
+            // Length field is within MAX_RECORD_SIZE (16 MB)
+            // Interpret as EncryptedRecord per spec §3.3.13
+            return Self::parse_encrypted_record(data);
+        }
+
+        // Traditional frame parsing (5-byte header)
+        let magic = first_four_bytes;
         let frame_type = data[4];
 
         match (magic, frame_type) {
@@ -308,7 +336,6 @@ impl Frame {
             (MAGIC_KEY_UPDATE, TYPE_KEY_UPDATE_ACK) => Self::parse_key_update_ack(&data[5..]),
             (MAGIC_ACK, TYPE_ACK) => Self::parse_ack_frame(&data[5..]),
             (MAGIC_WINDOW_UPDATE, TYPE_WINDOW_UPDATE) => Self::parse_window_update(&data[5..]),
-            (MAGIC_ERROR, TYPE_ERROR) => Self::parse_error_frame(&data[5..]),
             (MAGIC_DATA, TYPE_DATA) => Self::parse_data_frame(&data[5..]),
             _ => Err(Error::InvalidFrame(format!(
                 "Unknown frame: magic=0x{:08X}, type=0x{:02X}",
@@ -1042,7 +1069,6 @@ impl Frame {
 
     // === EncryptedRecord (§3.3.13) ===
 
-    #[allow(dead_code)] // Will be used when implementing encrypted frame support
     fn parse_encrypted_record(data: &[u8]) -> Result<Self> {
         check_len(data, 29)?; // 4 (length) + 1 (epoch) + 8 (counter) + 16 (tag)
 

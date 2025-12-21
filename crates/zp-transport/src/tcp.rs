@@ -192,9 +192,36 @@ pub struct TcpConnection {
 impl TcpConnection {
     /// Send a zp frame over TCP with length-prefixed framing
     ///
+    /// During handshake: sends frame directly as binary.
+    /// Post-handshake: wraps frame in EncryptedRecord (spec §3.3.13).
+    ///
     /// Frame is serialized and sent with 4-byte length prefix.
     pub async fn send_frame(&self, frame: &Frame) -> Result<()> {
-        let data = frame.serialize()?;
+        // Check if session is established
+        let session_established = self.session.read().await.is_established();
+
+        // Determine if frame should be plaintext or encrypted
+        let is_handshake_or_error = matches!(
+            frame,
+            Frame::ClientHello { .. }
+                | Frame::ServerHello { .. }
+                | Frame::ClientFinish { .. }
+                | Frame::KnownHello { .. }
+                | Frame::KnownResponse { .. }
+                | Frame::KnownFinish { .. }
+                | Frame::ErrorFrame { .. }
+        );
+
+        let data = if !session_established || is_handshake_or_error {
+            // Before session established OR handshake/error frames: send as plaintext
+            frame.serialize().map_err(Error::Protocol)?
+        } else {
+            // Post-handshake data frames: wrap in EncryptedRecord per spec §3.3.13
+            let mut session = self.session.write().await;
+            let encrypted = session.encrypt_frame(frame).map_err(Error::Protocol)?;
+            drop(session); // Release session lock before serialization
+            encrypted.serialize().map_err(Error::Protocol)?
+        };
 
         // Length-prefixed framing: [4-byte length][frame data]
         let length = data.len() as u32;
@@ -214,6 +241,7 @@ impl TcpConnection {
     /// Receive a zp frame from TCP with length-prefixed framing
     ///
     /// Reads 4-byte length prefix, then frame data.
+    /// Handles EncryptedRecord unwrapping for post-handshake frames.
     /// Returns None if connection closed.
     pub async fn recv_frame(&self) -> Result<Option<Frame>> {
         let mut stream = self.stream.write().await;
@@ -248,9 +276,20 @@ impl TcpConnection {
             .await
             .map_err(|e| Error::ConnectionFailed(format!("TCP recv failed: {}", e)))?;
 
-        // Parse frame
+        drop(stream); // Release stream lock before session operations
+
+        // Parse frame (handles both plaintext and EncryptedRecord)
         let frame = Frame::parse(&frame_buf)?;
-        Ok(Some(frame))
+
+        // Check if this is an EncryptedRecord that needs decryption
+        if matches!(frame, Frame::EncryptedRecord { .. }) {
+            let mut session = self.session.write().await;
+            let decrypted = session.decrypt_record(&frame).map_err(Error::Protocol)?;
+            Ok(Some(decrypted))
+        } else {
+            // Plaintext frame (handshake or ErrorFrame)
+            Ok(Some(frame))
+        }
     }
 
     /// Send a StreamChunk (for multiplexed mode)

@@ -51,8 +51,8 @@
   - Conformance tests: `tests/conformance/websocket_spec_appendix_d.rs` (6 tests, Appendix D compliance)
   - Integration tests: `crates/zp-transport/tests/websocket_integration.rs` (5 end-to-end tests)
   - Dependencies: tokio-tungstenite 0.21, futures-util 0.3
-  - TODO: EncryptedRecord wrapping for post-handshake frames (currently plaintext during handshake)
-  - Status: Production-ready for WebSocket fallback, pending EncryptedRecord integration
+  - EncryptedRecord integration: Post-handshake frames encrypted per §3.3.13 **[COMPLETE]**
+  - Status: Production-ready for WebSocket fallback with end-to-end encryption
 
 - WebRTC DataChannel transport implementation (zp-transport) **[COMPLETE]**
   - Spec §5 (NAT Traversal) and §6.4 (WebRTC DataChannel) conformance
@@ -92,10 +92,10 @@
   - Files: `crates/zp-transport/src/tcp.rs` (~398 lines)
   - Conformance tests: `tests/conformance/tcp_spec_3_3_7.rs` (12 tests, §3.3.7 compliance)
   - Integration tests: `crates/zp-transport/tests/tcp_integration.rs` (5 end-to-end tests)
+  - EncryptedRecord integration: Post-handshake frames encrypted per §3.3.13 **[COMPLETE]**
   - TODO: TLS 1.3 wrapper over TCP/443 (currently plain TCP)
-  - TODO: EncryptedRecord wrapper for post-handshake frames (per §3.3.13)
   - TODO: Racing with QUIC (ZP_RACING_THRESHOLD: 200ms per spec)
-  - Status: StreamChunk format and framing complete, pending TLS integration
+  - Status: StreamChunk format and framing complete, EncryptedRecord integrated, pending TLS integration
 
 - OPAQUE password-authenticated key exchange (zp-crypto + zp-core) **[COMPLETE]**
   - RFC 9807 conformance using opaque-ke v3.0 (NCC Group audited, June 2021)

@@ -294,18 +294,30 @@ impl WebSocketConnection {
     ///
     /// Returns error if frame serialization or send fails.
     pub async fn send_frame(&self, frame: &Frame) -> Result<()> {
-        let session = self.session.read().await;
-        let is_handshake = !session.is_established();
-        drop(session);
+        // Check if session is established
+        let session_established = self.session.read().await.is_established();
 
-        let data = if is_handshake || matches!(frame, Frame::ErrorFrame { .. }) {
-            // Handshake frames and ErrorFrame sent directly (plaintext)
+        // Determine if frame should be plaintext or encrypted
+        let is_handshake_or_error = matches!(
+            frame,
+            Frame::ClientHello { .. }
+                | Frame::ServerHello { .. }
+                | Frame::ClientFinish { .. }
+                | Frame::KnownHello { .. }
+                | Frame::KnownResponse { .. }
+                | Frame::KnownFinish { .. }
+                | Frame::ErrorFrame { .. }
+        );
+
+        let data = if !session_established || is_handshake_or_error {
+            // Before session established OR handshake/error frames: send as plaintext
             frame.serialize().map_err(Error::Protocol)?
         } else {
-            // Post-handshake: wrap in EncryptedRecord
-            // TODO: Implement encryption wrapping
-            // For now, send plaintext (will be fixed in next iteration)
-            frame.serialize().map_err(Error::Protocol)?
+            // Post-handshake data frames: wrap in EncryptedRecord per spec §3.3.13
+            let mut session = self.session.write().await;
+            let encrypted = session.encrypt_frame(frame).map_err(Error::Protocol)?;
+            drop(session); // Release session lock before serialization
+            encrypted.serialize().map_err(Error::Protocol)?
         };
 
         let mut ws = self.ws_stream.write().await;
@@ -347,12 +359,22 @@ impl WebSocketConnection {
                 .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?,
         };
 
+        drop(ws); // Release WS lock before session operations
+
         match msg {
             Message::Binary(data) => {
                 // Parse frame (handles both plaintext and EncryptedRecord)
                 let frame = Frame::parse(&data).map_err(Error::Protocol)?;
 
-                Ok(Some(frame))
+                // Check if this is an EncryptedRecord that needs decryption
+                if matches!(frame, Frame::EncryptedRecord { .. }) {
+                    let mut session = self.session.write().await;
+                    let decrypted = session.decrypt_record(&frame).map_err(Error::Protocol)?;
+                    Ok(Some(decrypted))
+                } else {
+                    // Plaintext frame (handshake or ErrorFrame)
+                    Ok(Some(frame))
+                }
             }
             Message::Close(_) => Ok(None),
             _ => Err(Error::Protocol(zp_core::Error::ProtocolViolation(
