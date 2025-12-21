@@ -555,4 +555,133 @@ mod tests {
         assert_eq!(PeerRole::Server, PeerRole::Server);
         assert_ne!(PeerRole::Client, PeerRole::Server);
     }
+
+    #[test]
+    fn test_webrtc_config_with_custom_stun() {
+        let mut config = WebRtcConfig::default();
+        config
+            .stun_servers
+            .push("stun:custom.example.com:3478".to_string());
+
+        assert!(
+            config.stun_servers.len() >= 2,
+            "Should have default + custom STUN servers"
+        );
+        assert!(
+            config
+                .stun_servers
+                .contains(&"stun:custom.example.com:3478".to_string()),
+            "Should contain custom STUN server"
+        );
+    }
+
+    #[test]
+    fn test_webrtc_config_with_turn() {
+        use webrtc::ice_transport::ice_server::RTCIceServer;
+
+        let mut config = WebRtcConfig::default();
+        config.turn_servers.push(RTCIceServer {
+            urls: vec!["turn:turn.example.com:3478".to_string()],
+            username: "test_user".to_string(),
+            credential: "test_pass".to_string(),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            config.turn_servers.len(),
+            1,
+            "Should have 1 TURN server configured"
+        );
+        assert_eq!(
+            config.turn_servers[0].username, "test_user",
+            "TURN username should match"
+        );
+    }
+
+    #[test]
+    fn test_endpoint_with_custom_config() {
+        let mut config = WebRtcConfig::default();
+        config
+            .stun_servers
+            .push("stun:test.example.com:3478".to_string());
+
+        let endpoint = WebRtcEndpoint::with_config(config);
+        assert!(
+            endpoint.is_ok(),
+            "Endpoint creation with custom config should succeed"
+        );
+    }
+
+    #[test]
+    fn test_signaling_message_ice_candidate() {
+        use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
+
+        // Test IceCandidate variant with default init
+        let candidate = RTCIceCandidateInit {
+            candidate: "candidate:1 1 UDP 2130706431 192.168.1.1 54321 typ host".to_string(),
+            ..Default::default()
+        };
+        let msg = SignalingMessage::IceCandidate(candidate);
+        assert!(
+            matches!(msg, SignalingMessage::IceCandidate(_)),
+            "Should be IceCandidate variant"
+        );
+    }
+
+    #[test]
+    fn test_signaling_message_clone() {
+        use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
+
+        // Test that SignalingMessage can be cloned
+        let candidate = RTCIceCandidateInit {
+            candidate: "test".to_string(),
+            ..Default::default()
+        };
+        let msg = SignalingMessage::IceCandidate(candidate);
+        let cloned = msg.clone();
+
+        assert!(
+            matches!(cloned, SignalingMessage::IceCandidate(_)),
+            "Cloned message should preserve variant"
+        );
+    }
+
+    #[test]
+    fn test_peer_role_display() {
+        // Ensure roles can be debugged/displayed
+        let client = PeerRole::Client;
+        let server = PeerRole::Server;
+
+        assert_eq!(format!("{:?}", client), "Client");
+        assert_eq!(format!("{:?}", server), "Server");
+    }
+
+    #[test]
+    fn test_webrtc_config_clone() {
+        let config = WebRtcConfig::default();
+        let cloned = config.clone();
+
+        assert_eq!(
+            config.stun_servers.len(),
+            cloned.stun_servers.len(),
+            "Cloned config should have same STUN server count"
+        );
+        assert_eq!(
+            config.turn_servers.len(),
+            cloned.turn_servers.len(),
+            "Cloned config should have same TURN server count"
+        );
+    }
+
+    #[test]
+    fn test_default_stun_servers_format() {
+        let config = WebRtcConfig::default();
+
+        for server in &config.stun_servers {
+            assert!(
+                server.starts_with("stun:"),
+                "STUN server URL should start with 'stun:'"
+            );
+        }
+    }
 }
