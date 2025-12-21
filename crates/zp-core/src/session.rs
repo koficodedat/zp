@@ -142,7 +142,7 @@ enum SessionState {
     KnownHelloSent {
         client_random: [u8; 32],
         opaque_client_state: Vec<u8>,
-        opaque_credential_request: Vec<u8>,  // Needed for encryption key derivation
+        opaque_credential_request: Vec<u8>, // Needed for encryption key derivation
     },
     /// Server: KnownResponse sent (Known Mode), awaiting KnownFinish.
     KnownResponseSent {
@@ -204,6 +204,12 @@ fn random_bytes_32() -> [u8; 32] {
 /// Derive session ID for Stranger Mode per spec §4.2.4.
 ///
 /// session_id = SHA-256(client_random || server_random || shared_secret)[0:16]
+///
+/// # Collision Probability
+/// With 128-bit session IDs:
+/// - ~1% collision after 2^64 sessions (birthday paradox)
+/// - ~0.01% collision after 10K sessions
+/// - Transport layer should detect and handle collisions
 fn derive_session_id_stranger(
     client_random: &[u8; 32],
     server_random: &[u8; 32],
@@ -217,6 +223,26 @@ fn derive_session_id_stranger(
     let mut session_id = [0u8; 16];
     session_id.copy_from_slice(&hash[0..16]);
     session_id
+}
+
+/// Check if a session ID collides with existing session IDs.
+///
+/// # Arguments
+/// * `session_id` - The session ID to check
+/// * `existing_ids` - Slice of existing session IDs to check against
+///
+/// # Returns
+/// `true` if the session_id matches any existing ID (collision detected)
+///
+/// # Example
+/// ```ignore
+/// let existing = vec![[1u8; 16], [2u8; 16]];
+/// if session_id_collides(&new_id, &existing) {
+///     // Handle collision - regenerate or reject
+/// }
+/// ```
+pub fn session_id_collides(session_id: &[u8; 16], existing_ids: &[[u8; 16]]) -> bool {
+    existing_ids.iter().any(|existing| existing == session_id)
 }
 
 impl Session {
@@ -254,6 +280,48 @@ impl Session {
     /// Get session keys (only available after handshake completes).
     pub fn keys(&self) -> Option<&SessionKeys> {
         self.keys.as_ref()
+    }
+
+    /// Get session ID (only available after handshake completes).
+    ///
+    /// # Returns
+    /// `Some(&[u8; 16])` if session is established, `None` otherwise
+    pub fn session_id(&self) -> Option<[u8; 16]> {
+        match &self.state {
+            SessionState::Established { session_id, .. } => Some(*session_id),
+            _ => None,
+        }
+    }
+
+    /// Check if handshake is in progress (not Idle, Established, or Closed).
+    pub fn is_handshake_in_progress(&self) -> bool {
+        !matches!(
+            self.state,
+            SessionState::Idle | SessionState::Established { .. } | SessionState::Closed
+        )
+    }
+
+    /// Check if handshake has timed out.
+    ///
+    /// # Arguments
+    /// * `elapsed_ms` - Milliseconds elapsed since handshake started
+    ///
+    /// # Returns
+    /// `true` if handshake is in progress and has exceeded configured timeout
+    ///
+    /// # Example
+    /// ```ignore
+    /// if session.is_handshake_timeout(elapsed_ms) {
+    ///     return Err(Error::HandshakeTimeout);
+    /// }
+    /// ```
+    pub fn is_handshake_timeout(&self, elapsed_ms: u64) -> bool {
+        self.is_handshake_in_progress() && elapsed_ms > self.config.handshake_timeout_ms
+    }
+
+    /// Get configured handshake timeout in milliseconds.
+    pub fn handshake_timeout_ms(&self) -> u64 {
+        self.config.handshake_timeout_ms
     }
 
     // === Client-side handshake (Stranger Mode) ===
@@ -700,7 +768,11 @@ impl Session {
                     client_random,
                     opaque_client_state,
                     opaque_credential_request,
-                } => (client_random, opaque_client_state, opaque_credential_request),
+                } => (
+                    client_random,
+                    opaque_client_state,
+                    opaque_credential_request,
+                ),
                 old_state => {
                     self.state = old_state;
                     return Err(Error::InvalidState);
@@ -745,7 +817,7 @@ impl Session {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"zp-known-mode-mlkem-encryption");
-        hasher.update(&opaque_credential_request);  // CredentialRequest we sent in KnownHello
+        hasher.update(&opaque_credential_request); // CredentialRequest we sent in KnownHello
         hasher.update(&opaque_credential_response);
         let encryption_key_hash = hasher.finalize();
         let encryption_key: [u8; 32] = encryption_key_hash.into();
@@ -1969,5 +2041,167 @@ mod tests {
             result.is_err(),
             "Should block new rotation while one is pending"
         );
+    }
+
+    #[test]
+    fn test_handshake_timeout_tracking() {
+        let mut session = Session::new(Role::Client, HandshakeMode::Stranger);
+
+        // Initially idle - not in progress
+        assert!(!session.is_handshake_in_progress());
+        assert!(!session.is_handshake_timeout(10000));
+
+        // Start handshake
+        let _frame = session.client_start_stranger().unwrap();
+
+        // Now in progress
+        assert!(session.is_handshake_in_progress());
+
+        // Not timed out at 1 second (default timeout is 5 seconds)
+        assert!(!session.is_handshake_timeout(1000));
+
+        // Not timed out at 5 seconds (exactly at limit)
+        assert!(!session.is_handshake_timeout(5000));
+
+        // Timed out after 5001ms
+        assert!(session.is_handshake_timeout(5001));
+
+        // Timed out after 10 seconds
+        assert!(session.is_handshake_timeout(10000));
+    }
+
+    #[test]
+    fn test_handshake_timeout_with_custom_config() {
+        let config = SessionConfig {
+            handshake_timeout_ms: 10000, // 10 second timeout
+            ..Default::default()
+        };
+        let mut session = Session::with_config(Role::Client, HandshakeMode::Stranger, config);
+
+        // Start handshake
+        let _frame = session.client_start_stranger().unwrap();
+
+        // Not timed out at 9 seconds
+        assert!(!session.is_handshake_timeout(9000));
+
+        // Not timed out at 10 seconds (exactly at limit)
+        assert!(!session.is_handshake_timeout(10000));
+
+        // Timed out after 10001ms
+        assert!(session.is_handshake_timeout(10001));
+    }
+
+    #[test]
+    fn test_handshake_timeout_clears_on_established() {
+        let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+        let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+        // Start handshake
+        let ch = client.client_start_stranger().unwrap();
+        assert!(client.is_handshake_in_progress());
+
+        // Process handshake
+        let sh = server.server_process_client_hello(ch).unwrap();
+        let cf = client.client_process_server_hello(sh).unwrap();
+        server.server_process_client_finish(cf).unwrap();
+
+        // Both should be established now
+        assert!(client.is_established());
+        assert!(server.is_established());
+
+        // No longer in progress, so timeout check returns false even with large elapsed time
+        assert!(!client.is_handshake_in_progress());
+        assert!(!client.is_handshake_timeout(99999));
+        assert!(!server.is_handshake_in_progress());
+        assert!(!server.is_handshake_timeout(99999));
+    }
+
+    #[test]
+    fn test_session_id_collision_detection() {
+        let id1 = [1u8; 16];
+        let id2 = [2u8; 16];
+        let id3 = [3u8; 16];
+
+        let existing = vec![id1, id2];
+
+        // No collision with new ID
+        assert!(!session_id_collides(&id3, &existing));
+
+        // Collision detected with existing ID
+        assert!(session_id_collides(&id1, &existing));
+        assert!(session_id_collides(&id2, &existing));
+    }
+
+    #[test]
+    fn test_session_id_collision_empty_list() {
+        let id = [1u8; 16];
+        let existing: Vec<[u8; 16]> = vec![];
+
+        // No collision with empty list
+        assert!(!session_id_collides(&id, &existing));
+    }
+
+    #[test]
+    fn test_session_id_available_after_handshake() {
+        let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+        let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+        // No session ID before handshake
+        assert!(client.session_id().is_none());
+        assert!(server.session_id().is_none());
+
+        // Complete handshake
+        let ch = client.client_start_stranger().unwrap();
+        assert!(client.session_id().is_none()); // Still none mid-handshake
+
+        let sh = server.server_process_client_hello(ch).unwrap();
+        let cf = client.client_process_server_hello(sh).unwrap();
+        server.server_process_client_finish(cf).unwrap();
+
+        // Session ID available after handshake
+        let client_id = client.session_id().expect("Client should have session ID");
+        let server_id = server.session_id().expect("Server should have session ID");
+
+        // Both should have the same session ID
+        assert_eq!(client_id, server_id);
+
+        // Verify it's 16 bytes (128 bits)
+        assert_eq!(client_id.len(), 16);
+    }
+
+    #[test]
+    fn test_session_id_uniqueness_across_handshakes() {
+        // Create multiple handshakes and verify session IDs are different
+        let mut session_ids = Vec::new();
+
+        for _ in 0..10 {
+            let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+            let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+            // Complete handshake
+            let ch = client.client_start_stranger().unwrap();
+            let sh = server.server_process_client_hello(ch).unwrap();
+            let cf = client.client_process_server_hello(sh).unwrap();
+            server.server_process_client_finish(cf).unwrap();
+
+            let session_id = client.session_id().expect("Should have session ID");
+
+            // Check for collision with existing sessions
+            assert!(
+                !session_id_collides(&session_id, &session_ids),
+                "Session ID collision detected (very unlikely with 10 sessions)"
+            );
+
+            session_ids.push(session_id);
+        }
+
+        // Verify all session IDs are unique
+        for (i, id1) in session_ids.iter().enumerate() {
+            for (j, id2) in session_ids.iter().enumerate() {
+                if i != j {
+                    assert_ne!(id1, id2, "Session IDs should be unique");
+                }
+            }
+        }
     }
 }

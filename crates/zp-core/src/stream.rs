@@ -190,6 +190,9 @@ impl Stream {
     }
 
     /// Close this stream for sending (send FIN).
+    ///
+    /// # Errors
+    /// Returns `Error::StreamClosed` if already closed for sending or fully closed.
     pub fn close_send(&mut self) -> Result<()> {
         match self.state {
             StreamState::Open => {
@@ -200,11 +203,21 @@ impl Stream {
                 self.state = StreamState::Closed;
                 Ok(())
             }
-            _ => Err(Error::StreamClosed),
+            StreamState::HalfClosedLocal => {
+                // Already closed for sending - cannot close again
+                Err(Error::StreamClosed)
+            }
+            StreamState::Closed => {
+                // Fully closed - cannot close again
+                Err(Error::StreamClosed)
+            }
         }
     }
 
     /// Mark remote side as closed (received FIN).
+    ///
+    /// # Errors
+    /// Returns `Error::StreamClosed` if remote already closed or fully closed.
     pub fn close_recv(&mut self) -> Result<()> {
         match self.state {
             StreamState::Open => {
@@ -215,7 +228,14 @@ impl Stream {
                 self.state = StreamState::Closed;
                 Ok(())
             }
-            _ => Err(Error::StreamClosed),
+            StreamState::HalfClosedRemote => {
+                // Remote already marked closed - cannot close again
+                Err(Error::StreamClosed)
+            }
+            StreamState::Closed => {
+                // Fully closed - cannot close again
+                Err(Error::StreamClosed)
+            }
         }
     }
 
@@ -601,5 +621,52 @@ mod tests {
 
         let increment = mux.generate_conn_window_update();
         assert_eq!(increment, total_consumed);
+    }
+
+    #[test]
+    fn test_stream_double_close_send_prevention() {
+        let mut stream = Stream::new(1, 1000);
+
+        // First close_send should succeed
+        stream.close_send().unwrap();
+        assert_eq!(stream.state(), StreamState::HalfClosedLocal);
+
+        // Second close_send should fail (already closed for sending)
+        let result = stream.close_send();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::StreamClosed));
+    }
+
+    #[test]
+    fn test_stream_double_close_recv_prevention() {
+        let mut stream = Stream::new(1, 1000);
+
+        // First close_recv should succeed
+        stream.close_recv().unwrap();
+        assert_eq!(stream.state(), StreamState::HalfClosedRemote);
+
+        // Second close_recv should fail (remote already marked closed)
+        let result = stream.close_recv();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::StreamClosed));
+    }
+
+    #[test]
+    fn test_stream_close_after_fully_closed() {
+        let mut stream = Stream::new(1, 1000);
+
+        // Close both directions
+        stream.close_send().unwrap();
+        stream.close_recv().unwrap();
+        assert_eq!(stream.state(), StreamState::Closed);
+
+        // Attempting to close again should fail
+        let result_send = stream.close_send();
+        assert!(result_send.is_err());
+        assert!(matches!(result_send.unwrap_err(), Error::StreamClosed));
+
+        let result_recv = stream.close_recv();
+        assert!(result_recv.is_err());
+        assert!(matches!(result_recv.unwrap_err(), Error::StreamClosed));
     }
 }
