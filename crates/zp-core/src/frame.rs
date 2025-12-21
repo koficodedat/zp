@@ -1413,4 +1413,416 @@ mod tests {
             _ => panic!("Expected SyncFrame"),
         }
     }
+
+    #[test]
+    fn test_known_hello_roundtrip() {
+        // Test KnownHello frame serialization and parsing
+        let frame = Frame::KnownHello {
+            supported_versions: vec![0x0100, 0x0101],
+            min_version: 0x0100,
+            supported_ciphers: vec![0x01, 0x02, 0x03],
+            opaque_credential_request: vec![0xAA; 100], // Simulate OPAQUE message
+            random: [0x42; 32],
+        };
+
+        let serialized = frame.serialize().expect("Should serialize KnownHello");
+        let parsed = Frame::parse(&serialized).expect("Should parse KnownHello");
+
+        match parsed {
+            Frame::KnownHello {
+                supported_versions,
+                min_version,
+                supported_ciphers,
+                opaque_credential_request,
+                random,
+            } => {
+                assert_eq!(supported_versions, vec![0x0100, 0x0101]);
+                assert_eq!(min_version, 0x0100);
+                assert_eq!(supported_ciphers, vec![0x01, 0x02, 0x03]);
+                assert_eq!(opaque_credential_request.len(), 100);
+                assert_eq!(opaque_credential_request[0], 0xAA);
+                assert_eq!(random, [0x42; 32]);
+            }
+            _ => panic!("Expected KnownHello frame"),
+        }
+    }
+
+    #[test]
+    fn test_known_response_roundtrip() {
+        // Test KnownResponse frame serialization and parsing
+        let frame = Frame::KnownResponse {
+            selected_version: 0x0100,
+            selected_cipher: 0x01,
+            opaque_credential_response: vec![0xBB; 150], // Simulate OPAQUE message
+            random: [0x43; 32],
+            mlkem_pubkey_encrypted: vec![0xCC; 1200], // ML-KEM-768 pubkey + tag
+        };
+
+        let serialized = frame.serialize().expect("Should serialize KnownResponse");
+        let parsed = Frame::parse(&serialized).expect("Should parse KnownResponse");
+
+        match parsed {
+            Frame::KnownResponse {
+                selected_version,
+                selected_cipher,
+                opaque_credential_response,
+                random,
+                mlkem_pubkey_encrypted,
+            } => {
+                assert_eq!(selected_version, 0x0100);
+                assert_eq!(selected_cipher, 0x01);
+                assert_eq!(opaque_credential_response.len(), 150);
+                assert_eq!(opaque_credential_response[0], 0xBB);
+                assert_eq!(random, [0x43; 32]);
+                assert_eq!(mlkem_pubkey_encrypted.len(), 1200);
+                assert_eq!(mlkem_pubkey_encrypted[0], 0xCC);
+            }
+            _ => panic!("Expected KnownResponse frame"),
+        }
+    }
+
+    #[test]
+    fn test_known_finish_roundtrip() {
+        // Test KnownFinish frame serialization and parsing
+        let frame = Frame::KnownFinish {
+            opaque_credential_finalization: vec![0xDD; 200], // Simulate OPAQUE finalization
+            mlkem_ciphertext_encrypted: vec![0xEE; 1104],    // ML-KEM-768 ciphertext + tag
+        };
+
+        let serialized = frame.serialize().expect("Should serialize KnownFinish");
+        let parsed = Frame::parse(&serialized).expect("Should parse KnownFinish");
+
+        match parsed {
+            Frame::KnownFinish {
+                opaque_credential_finalization,
+                mlkem_ciphertext_encrypted,
+            } => {
+                assert_eq!(opaque_credential_finalization.len(), 200);
+                assert_eq!(opaque_credential_finalization[0], 0xDD);
+                assert_eq!(mlkem_ciphertext_encrypted.len(), 1104);
+                assert_eq!(mlkem_ciphertext_encrypted[0], 0xEE);
+            }
+            _ => panic!("Expected KnownFinish frame"),
+        }
+    }
+
+    #[test]
+    fn test_known_hello_with_large_opaque_message() {
+        // Test KnownHello with large OPAQUE message (edge case)
+        let frame = Frame::KnownHello {
+            supported_versions: vec![0x0100],
+            min_version: 0x0100,
+            supported_ciphers: vec![0x01],
+            opaque_credential_request: vec![0xFF; 5000], // Large OPAQUE message
+            random: [0x44; 32],
+        };
+
+        let serialized = frame
+            .serialize()
+            .expect("Should serialize large KnownHello");
+        let parsed = Frame::parse(&serialized).expect("Should parse large KnownHello");
+
+        match parsed {
+            Frame::KnownHello {
+                opaque_credential_request,
+                ..
+            } => {
+                assert_eq!(opaque_credential_request.len(), 5000);
+            }
+            _ => panic!("Expected KnownHello frame"),
+        }
+    }
+
+    // === Error Path Tests ===
+
+    // === Stranger Mode Serialize Error Path Tests ===
+
+    #[test]
+    fn test_serialize_wrong_frame_type_client_hello() {
+        let frame = Frame::KnownHello {
+            supported_versions: vec![0x0100],
+            min_version: 0x0100,
+            supported_ciphers: vec![0x01],
+            opaque_credential_request: vec![0xAA; 50],
+            random: [0x42; 32],
+        };
+
+        let result = frame.serialize_client_hello();
+        assert!(result.is_err(), "Should fail with wrong frame type");
+    }
+
+    #[test]
+    fn test_serialize_wrong_frame_type_server_hello() {
+        let frame = Frame::ClientHello {
+            supported_versions: vec![0x0100],
+            min_version: 0x0100,
+            supported_ciphers: vec![0x01],
+            x25519_pubkey: [0x42; 32],
+            random: [0x43; 32],
+        };
+
+        let result = frame.serialize_server_hello();
+        assert!(result.is_err(), "Should fail with wrong frame type");
+    }
+
+    #[test]
+    fn test_serialize_wrong_frame_type_client_finish() {
+        let frame = Frame::ServerHello {
+            selected_version: 0x0100,
+            selected_cipher: 0x01,
+            x25519_pubkey: [0x42; 32],
+            mlkem_pubkey: vec![0xCC; 1000],
+            random: [0x43; 32],
+        };
+
+        let result = frame.serialize_client_finish();
+        assert!(result.is_err(), "Should fail with wrong frame type");
+    }
+
+    // === EncryptedRecord and StreamChunk Serialize Error Tests ===
+    // Note: These frame types are not yet integrated into Frame::parse() dispatcher,
+    // so we only test the serialize error paths here
+
+    #[test]
+    fn test_serialize_wrong_frame_type_sync_frame() {
+        let frame = Frame::DataFrame {
+            stream_id: 1,
+            seq: 100,
+            flags: 0,
+            payload: vec![0x11; 50],
+        };
+
+        let result = frame.serialize_sync_frame();
+        assert!(result.is_err(), "Should fail with wrong frame type");
+    }
+
+    #[test]
+    fn test_serialize_wrong_frame_type_encrypted_record() {
+        let frame = Frame::StreamChunk {
+            stream_id: 5,
+            payload: vec![0x22; 30],
+        };
+
+        let result = frame.serialize_encrypted_record();
+        assert!(result.is_err(), "Should fail with wrong frame type");
+    }
+
+    #[test]
+    fn test_serialize_wrong_frame_type_stream_chunk() {
+        let frame = Frame::EncryptedRecord {
+            epoch: 1,
+            counter: 50,
+            ciphertext: vec![0x33; 100],
+            tag: [0x44; 16],
+        };
+
+        let result = frame.serialize_stream_chunk();
+        assert!(result.is_err(), "Should fail with wrong frame type");
+    }
+
+    #[test]
+    fn test_parse_truncated_known_hello() {
+        // Create a valid KnownHello and truncate it
+        let frame = Frame::KnownHello {
+            supported_versions: vec![0x0100],
+            min_version: 0x0100,
+            supported_ciphers: vec![0x01],
+            opaque_credential_request: vec![0xAA; 50],
+            random: [0x42; 32],
+        };
+
+        let serialized = frame.serialize().expect("Should serialize");
+
+        // Truncate to trigger InsufficientData error
+        let truncated = &serialized[0..10];
+        let result = Frame::parse(truncated);
+
+        assert!(result.is_err(), "Should fail on truncated data");
+    }
+
+    #[test]
+    fn test_parse_truncated_known_response() {
+        let frame = Frame::KnownResponse {
+            selected_version: 0x0100,
+            selected_cipher: 0x01,
+            opaque_credential_response: vec![0xBB; 100],
+            random: [0x43; 32],
+            mlkem_pubkey_encrypted: vec![0xCC; 1000],
+        };
+
+        let serialized = frame.serialize().expect("Should serialize");
+        let truncated = &serialized[0..15];
+        let result = Frame::parse(truncated);
+
+        assert!(result.is_err(), "Should fail on truncated data");
+    }
+
+    #[test]
+    fn test_parse_truncated_known_finish() {
+        let frame = Frame::KnownFinish {
+            opaque_credential_finalization: vec![0xDD; 100],
+            mlkem_ciphertext_encrypted: vec![0xEE; 1000],
+        };
+
+        let serialized = frame.serialize().expect("Should serialize");
+        let truncated = &serialized[0..8];
+        let result = Frame::parse(truncated);
+
+        assert!(result.is_err(), "Should fail on truncated data");
+    }
+
+    #[test]
+    fn test_parse_invalid_magic_number() {
+        // Create data with invalid magic number
+        let mut invalid_data = vec![0xFF, 0xFF, 0xFF, 0xFF]; // Invalid magic
+        invalid_data.push(0x01); // Some type byte
+        invalid_data.extend_from_slice(&[0x00; 100]); // Padding
+
+        let result = Frame::parse(&invalid_data);
+        assert!(result.is_err(), "Should fail on invalid magic number");
+    }
+
+    #[test]
+    fn test_serialize_wrong_frame_type_known_hello() {
+        // Try to serialize a ClientHello using serialize_known_hello
+        let frame = Frame::ClientHello {
+            supported_versions: vec![0x0100],
+            min_version: 0x0100,
+            supported_ciphers: vec![0x01],
+            x25519_pubkey: [0x42; 32],
+            random: [0x43; 32],
+        };
+
+        // This calls the internal serialize_known_hello on wrong type
+        let result = frame.serialize_known_hello();
+        assert!(result.is_err(), "Should fail with wrong frame type");
+    }
+
+    #[test]
+    fn test_serialize_wrong_frame_type_known_response() {
+        let frame = Frame::ServerHello {
+            selected_version: 0x0100,
+            selected_cipher: 0x01,
+            x25519_pubkey: [0x42; 32],
+            mlkem_pubkey: vec![0xCC; 1000],
+            random: [0x43; 32],
+        };
+
+        let result = frame.serialize_known_response();
+        assert!(result.is_err(), "Should fail with wrong frame type");
+    }
+
+    #[test]
+    fn test_serialize_wrong_frame_type_known_finish() {
+        let frame = Frame::ClientFinish {
+            mlkem_ciphertext: vec![0xEE; 1000],
+        };
+
+        let result = frame.serialize_known_finish();
+        assert!(result.is_err(), "Should fail with wrong frame type");
+    }
+
+    #[test]
+    fn test_parse_known_hello_insufficient_data_for_versions() {
+        // MAGIC (4) + TYPE (1) + version_count (1) = 6 bytes
+        // But claim 2 versions (need 4 more bytes) and provide only 2
+        let mut data = Vec::new();
+        data.extend_from_slice(&MAGIC_KNOWN_HELLO.to_le_bytes());
+        data.push(TYPE_KNOWN_HELLO);
+        data.push(2); // claim 2 versions
+        data.extend_from_slice(&[0x00, 0x01]); // Only 1 version worth of data
+
+        let result = Frame::parse(&data);
+        assert!(
+            result.is_err(),
+            "Should fail with insufficient version data"
+        );
+    }
+
+    #[test]
+    fn test_parse_known_hello_insufficient_data_for_ciphers() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&MAGIC_KNOWN_HELLO.to_le_bytes());
+        data.push(TYPE_KNOWN_HELLO);
+        data.push(1); // 1 version
+        data.extend_from_slice(&[0x00, 0x01]); // version data
+        data.extend_from_slice(&[0x00, 0x01]); // min_version
+        data.push(3); // claim 3 ciphers
+        data.extend_from_slice(&[0x01, 0x02]); // Only 2 ciphers
+
+        let result = Frame::parse(&data);
+        assert!(result.is_err(), "Should fail with insufficient cipher data");
+    }
+
+    #[test]
+    fn test_parse_known_hello_insufficient_data_for_opaque() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&MAGIC_KNOWN_HELLO.to_le_bytes());
+        data.push(TYPE_KNOWN_HELLO);
+        data.push(1); // 1 version
+        data.extend_from_slice(&[0x00, 0x01]); // version
+        data.extend_from_slice(&[0x00, 0x01]); // min_version
+        data.push(1); // 1 cipher
+        data.push(0x01); // cipher
+        data.extend_from_slice(&(100u16).to_le_bytes()); // claim 100 bytes of OPAQUE data
+        data.extend_from_slice(&[0xAA; 50]); // Only provide 50 bytes
+
+        let result = Frame::parse(&data);
+        assert!(result.is_err(), "Should fail with insufficient OPAQUE data");
+    }
+
+    #[test]
+    fn test_parse_known_response_insufficient_mlkem_data() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&MAGIC_KNOWN_RESPONSE.to_le_bytes());
+        data.push(TYPE_KNOWN_RESPONSE);
+        data.extend_from_slice(&(0x0100u16).to_le_bytes()); // selected_version
+        data.push(0x01); // selected_cipher
+        data.extend_from_slice(&(50u16).to_le_bytes()); // OPAQUE response len
+        data.extend_from_slice(&[0xBB; 50]); // OPAQUE response
+        data.extend_from_slice(&[0x43; 32]); // random
+        data.extend_from_slice(&(1000u16).to_le_bytes()); // claim 1000 bytes ML-KEM
+        data.extend_from_slice(&[0xCC; 500]); // Only provide 500 bytes
+
+        let result = Frame::parse(&data);
+        assert!(result.is_err(), "Should fail with insufficient ML-KEM data");
+    }
+
+    #[test]
+    fn test_known_mode_frames_in_serialize_parse_roundtrip() {
+        // Ensure Known Mode frames are included in comprehensive roundtrip test
+        let known_frames = vec![
+            Frame::KnownHello {
+                supported_versions: vec![0x0100],
+                min_version: 0x0100,
+                supported_ciphers: vec![0x01, 0x02],
+                opaque_credential_request: vec![0xAA; 50],
+                random: [0x01; 32],
+            },
+            Frame::KnownResponse {
+                selected_version: 0x0100,
+                selected_cipher: 0x01,
+                opaque_credential_response: vec![0xBB; 75],
+                random: [0x02; 32],
+                mlkem_pubkey_encrypted: vec![0xCC; 1200],
+            },
+            Frame::KnownFinish {
+                opaque_credential_finalization: vec![0xDD; 100],
+                mlkem_ciphertext_encrypted: vec![0xEE; 1104],
+            },
+        ];
+
+        for frame in known_frames {
+            let serialized = frame.serialize().expect("Should serialize");
+            let parsed = Frame::parse(&serialized).expect("Should parse");
+
+            // Verify frame type matches
+            match (&frame, &parsed) {
+                (Frame::KnownHello { .. }, Frame::KnownHello { .. }) => {}
+                (Frame::KnownResponse { .. }, Frame::KnownResponse { .. }) => {}
+                (Frame::KnownFinish { .. }, Frame::KnownFinish { .. }) => {}
+                _ => panic!("Frame type mismatch"),
+            }
+        }
+    }
 }

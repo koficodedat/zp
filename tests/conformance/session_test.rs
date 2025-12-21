@@ -559,32 +559,38 @@ fn test_key_rotation_secret_update() {
 #[test]
 fn test_opaque_registration_flow() {
     // Test OPAQUE registration flow (prerequisite for Known Mode login)
+    use rand::rngs::OsRng;
     use zp_crypto::pake::{
-        registration_start, registration_response, registration_finalize, registration_complete,
+        registration_complete, registration_finalize, registration_response, registration_start,
         OpaqueServerSetup,
     };
-    use rand::rngs::OsRng;
 
     let mut rng = OsRng;
     let password = b"test_password_known_mode_2025";
     let credential_id = b"user@zp.test";
 
     // Server setup (one-time)
-    let server_setup = OpaqueServerSetup::generate(&mut rng)
-        .expect("Server setup generation should succeed");
+    let server_setup =
+        OpaqueServerSetup::generate(&mut rng).expect("Server setup generation should succeed");
 
     // Step 1: Client registration start
-    let (request, client_state) = registration_start(password, &mut rng)
-        .expect("Registration start should succeed");
+    let (request, client_state) =
+        registration_start(password, &mut rng).expect("Registration start should succeed");
 
-    assert!(!request.is_empty(), "Registration request must not be empty");
+    assert!(
+        !request.is_empty(),
+        "Registration request must not be empty"
+    );
     assert!(!client_state.is_empty(), "Client state must not be empty");
 
     // Step 2: Server registration response
     let response = registration_response(&server_setup, &request, credential_id)
         .expect("Registration response should succeed");
 
-    assert!(!response.is_empty(), "Registration response must not be empty");
+    assert!(
+        !response.is_empty(),
+        "Registration response must not be empty"
+    );
 
     // Step 3: Client registration finalize
     let upload = registration_finalize(password, &response, credential_id, &client_state, &mut rng)
@@ -593,44 +599,49 @@ fn test_opaque_registration_flow() {
     assert!(!upload.is_empty(), "Registration upload must not be empty");
 
     // Step 4: Server registration complete
-    let password_file = registration_complete(&upload)
-        .expect("Registration complete should succeed");
+    let password_file =
+        registration_complete(&upload).expect("Registration complete should succeed");
 
-    assert!(!password_file.to_bytes().is_empty(), "Password file must not be empty");
+    assert!(
+        !password_file.to_bytes().is_empty(),
+        "Password file must not be empty"
+    );
 }
 
 #[test]
 fn test_opaque_login_flow() {
     // Test OPAQUE login flow (validates password authentication works)
-    use zp_crypto::pake::{
-        registration_start, registration_response, registration_finalize, registration_complete,
-        login_start, login_response, login_finalize, login_complete,
-        OpaqueServerSetup,
-    };
     use rand::rngs::OsRng;
+    use zp_crypto::pake::{
+        login_complete, login_finalize, login_response, login_start, registration_complete,
+        registration_finalize, registration_response, registration_start, OpaqueServerSetup,
+    };
 
     let mut rng = OsRng;
     let password = b"test_password_login_2025";
     let credential_id = b"user@zp.test";
 
     // Setup and registration (prerequisite)
-    let server_setup = OpaqueServerSetup::generate(&mut rng)
-        .expect("Server setup should succeed");
-    let (reg_request, reg_state) = registration_start(password, &mut rng)
-        .expect("Registration start should succeed");
+    let server_setup = OpaqueServerSetup::generate(&mut rng).expect("Server setup should succeed");
+    let (reg_request, reg_state) =
+        registration_start(password, &mut rng).expect("Registration start should succeed");
     let reg_response = registration_response(&server_setup, &reg_request, credential_id)
         .expect("Registration response should succeed");
-    let upload = registration_finalize(password, &reg_response, credential_id, &reg_state, &mut rng)
-        .expect("Registration finalize should succeed");
-    let password_file = registration_complete(&upload)
-        .expect("Registration complete should succeed");
+    let upload =
+        registration_finalize(password, &reg_response, credential_id, &reg_state, &mut rng)
+            .expect("Registration finalize should succeed");
+    let password_file =
+        registration_complete(&upload).expect("Registration complete should succeed");
 
     // Step 1: Client login start
-    let (login_request, client_login_state) = login_start(password, &mut rng)
-        .expect("Login start should succeed");
+    let (login_request, client_login_state) =
+        login_start(password, &mut rng).expect("Login start should succeed");
 
     assert!(!login_request.is_empty(), "Login request must not be empty");
-    assert!(!client_login_state.is_empty(), "Client login state must not be empty");
+    assert!(
+        !client_login_state.is_empty(),
+        "Client login state must not be empty"
+    );
 
     // Step 2: Server login response
     let (login_response, server_state) = login_response(
@@ -642,7 +653,10 @@ fn test_opaque_login_flow() {
     )
     .expect("Login response should succeed");
 
-    assert!(!login_response.is_empty(), "Login response must not be empty");
+    assert!(
+        !login_response.is_empty(),
+        "Login response must not be empty"
+    );
     assert!(!server_state.is_empty(), "Server state must not be empty");
 
     // Step 3: Client login finalize
@@ -655,18 +669,25 @@ fn test_opaque_login_flow() {
     .expect("Login finalize should succeed");
 
     assert!(!finalization.is_empty(), "Finalization must not be empty");
-    assert_eq!(client_session_key.len(), 64, "OPAQUE session key must be 64 bytes");
+    assert_eq!(
+        client_session_key.len(),
+        64,
+        "OPAQUE session key must be 64 bytes"
+    );
 
     // Step 4: Server login complete
-    let server_session_key = login_complete(&finalization, &server_state)
-        .expect("Login complete should succeed");
+    let server_session_key =
+        login_complete(&finalization, &server_state).expect("Login complete should succeed");
 
-    assert_eq!(server_session_key.len(), 64, "OPAQUE session key must be 64 bytes");
+    assert_eq!(
+        server_session_key.len(),
+        64,
+        "OPAQUE session key must be 64 bytes"
+    );
 
     // Session keys must match
     assert_eq!(
-        &*client_session_key,
-        &*server_session_key,
+        &*client_session_key, &*server_session_key,
         "Client and server session keys must match"
     );
 }
@@ -674,27 +695,27 @@ fn test_opaque_login_flow() {
 #[test]
 fn test_known_mode_full_handshake() {
     // Complete Known Mode handshake with OPAQUE authentication + ML-KEM PQC
+    use rand::rngs::OsRng;
     use zp_crypto::pake::{
-        registration_start, registration_response, registration_finalize, registration_complete,
+        registration_complete, registration_finalize, registration_response, registration_start,
         OpaqueServerSetup,
     };
-    use rand::rngs::OsRng;
 
     let mut rng = OsRng;
     let password = b"known_mode_test_password_2025";
     let credential_id = b"known@zp.test";
 
     // Prerequisite: OPAQUE registration
-    let server_setup = OpaqueServerSetup::generate(&mut rng)
-        .expect("Server setup should succeed");
-    let (reg_request, reg_state) = registration_start(password, &mut rng)
-        .expect("Registration start should succeed");
+    let server_setup = OpaqueServerSetup::generate(&mut rng).expect("Server setup should succeed");
+    let (reg_request, reg_state) =
+        registration_start(password, &mut rng).expect("Registration start should succeed");
     let reg_response = registration_response(&server_setup, &reg_request, credential_id)
         .expect("Registration response should succeed");
-    let upload = registration_finalize(password, &reg_response, credential_id, &reg_state, &mut rng)
-        .expect("Registration finalize should succeed");
-    let password_file = registration_complete(&upload)
-        .expect("Registration complete should succeed");
+    let upload =
+        registration_finalize(password, &reg_response, credential_id, &reg_state, &mut rng)
+            .expect("Registration finalize should succeed");
+    let password_file =
+        registration_complete(&upload).expect("Registration complete should succeed");
 
     // Create client and server sessions in Known Mode
     let mut client = Session::new(Role::Client, HandshakeMode::Known);
@@ -800,7 +821,8 @@ fn test_known_mode_full_handshake() {
             // ML-KEM-768: 1088 + 16 = 1104 bytes
             // ML-KEM-1024: 1568 + 16 = 1584 bytes
             assert!(
-                mlkem_ciphertext_encrypted.len() == 1104 || mlkem_ciphertext_encrypted.len() == 1584,
+                mlkem_ciphertext_encrypted.len() == 1104
+                    || mlkem_ciphertext_encrypted.len() == 1584,
                 "Encrypted ML-KEM ciphertext must be 1104 (ML-KEM-768) or 1584 (ML-KEM-1024) bytes"
             );
         }
@@ -863,11 +885,11 @@ fn test_known_mode_full_handshake() {
 #[test]
 fn test_known_mode_wrong_password_fails() {
     // Verify that wrong password is detected during Known Mode handshake
+    use rand::rngs::OsRng;
     use zp_crypto::pake::{
-        registration_start, registration_response, registration_finalize, registration_complete,
+        registration_complete, registration_finalize, registration_response, registration_start,
         OpaqueServerSetup,
     };
-    use rand::rngs::OsRng;
 
     let mut rng = OsRng;
     let correct_password = b"correct_password_2025";
@@ -875,16 +897,21 @@ fn test_known_mode_wrong_password_fails() {
     let credential_id = b"known@zp.test";
 
     // Registration with correct password
-    let server_setup = OpaqueServerSetup::generate(&mut rng)
-        .expect("Server setup should succeed");
-    let (reg_request, reg_state) = registration_start(correct_password, &mut rng)
-        .expect("Registration start should succeed");
+    let server_setup = OpaqueServerSetup::generate(&mut rng).expect("Server setup should succeed");
+    let (reg_request, reg_state) =
+        registration_start(correct_password, &mut rng).expect("Registration start should succeed");
     let reg_response = registration_response(&server_setup, &reg_request, credential_id)
         .expect("Registration response should succeed");
-    let upload = registration_finalize(correct_password, &reg_response, credential_id, &reg_state, &mut rng)
-        .expect("Registration finalize should succeed");
-    let password_file = registration_complete(&upload)
-        .expect("Registration complete should succeed");
+    let upload = registration_finalize(
+        correct_password,
+        &reg_response,
+        credential_id,
+        &reg_state,
+        &mut rng,
+    )
+    .expect("Registration finalize should succeed");
+    let password_file =
+        registration_complete(&upload).expect("Registration complete should succeed");
 
     // Create sessions
     let mut client = Session::new(Role::Client, HandshakeMode::Known);
@@ -902,7 +929,8 @@ fn test_known_mode_wrong_password_fails() {
 
     // Client processes response with wrong password
     // This should either fail here or produce a mismatched finalization
-    let result = client.client_process_known_response(known_response, wrong_password, credential_id);
+    let result =
+        client.client_process_known_response(known_response, wrong_password, credential_id);
 
     // If client finalize succeeds with wrong password, server must detect mismatch
     if let Ok(known_finish) = result {
@@ -923,17 +951,21 @@ fn test_known_mode_key_derivation() {
     use sha2::{Digest, Sha256};
 
     // Test inputs (using placeholder values since OPAQUE keys are variable-length)
-    let client_random = hex::decode("0001020304050607080910111213141516171819202122232425262728293031").unwrap();
-    let server_random = hex::decode("3130292827262524232221201918171615141312111009080706050403020100").unwrap();
+    let client_random =
+        hex::decode("0001020304050607080910111213141516171819202122232425262728293031").unwrap();
+    let server_random =
+        hex::decode("3130292827262524232221201918171615141312111009080706050403020100").unwrap();
 
     // OPAQUE session_key is 64 bytes; use first 32 for session_id derivation
     let opaque_session_key = hex::decode(
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
-         bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    ).unwrap();
+         bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
+    .unwrap();
 
     // ML-KEM shared secret is 32 bytes
-    let mlkem_shared_secret = hex::decode("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc").unwrap();
+    let mlkem_shared_secret =
+        hex::decode("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc").unwrap();
 
     // session_id = SHA-256(client_random || server_random || opaque_key[0:32])[0:16]
     let mut hasher = Sha256::new();
@@ -970,16 +1002,14 @@ fn test_known_mode_key_derivation() {
 
     // Keys must be distinct
     assert_ne!(
-        client_to_server_key,
-        server_to_client_key,
+        client_to_server_key, server_to_client_key,
         "C2S and S2C keys must be different"
     );
 
     // Verify info string is correct
     let info_session_keys = b"zp-known-session-keys";
     assert_eq!(
-        info_session_keys,
-        b"zp-known-session-keys",
+        info_session_keys, b"zp-known-session-keys",
         "Info string for Known Mode must match spec"
     );
 }
