@@ -11,6 +11,7 @@
       "Bash(git log:*)",
       "Bash(git push:*)",
       "Bash(git pull:*)",
+      "Bash(rm -rf:*)",
       "Read(**/*.rs)",
       "Read(**/*.toml)",
       "Read(**/*.md)",
@@ -19,7 +20,6 @@
       "Edit(crates/**/*.rs)"
     ],
     "deny": [
-      "Bash(rm -rf:*)",
       "Bash(cargo publish:*)",
       "Write(.env*)"
     ]
