@@ -40,3 +40,7 @@ path = "websocket_spec_appendix_d.rs"
 [[test]]
 name = "webrtc"
 path = "webrtc_spec_sections_5_and_6_4.rs"
+
+[[test]]
+name = "tcp"
+path = "tcp_spec_3_3_7.rs"
