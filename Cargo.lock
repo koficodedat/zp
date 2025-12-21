@@ -2496,10 +2496,13 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "rand 0.8.5",
+ "rustls",
  "sha2",
+ "tokio",
  "zeroize",
  "zp-core",
  "zp-crypto",
+ "zp-transport",
 ]
 
 [[package]]

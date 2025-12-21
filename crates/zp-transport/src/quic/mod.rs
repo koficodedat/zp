@@ -154,6 +154,17 @@ impl QuicEndpoint {
         })
     }
 
+    /// Get the local address this endpoint is bound to.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if endpoint is not bound (client mode without connection).
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        self.endpoint
+            .local_addr()
+            .map_err(|e| Error::ConnectionFailed(format!("No local address: {}", e)))
+    }
+
     /// Connect to a remote server (client only).
     ///
     /// Establishes QUIC connection and initializes control stream (stream 0).
