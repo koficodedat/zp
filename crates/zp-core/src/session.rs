@@ -142,6 +142,7 @@ enum SessionState {
     KnownHelloSent {
         client_random: [u8; 32],
         opaque_client_state: Vec<u8>,
+        opaque_credential_request: Vec<u8>,  // Needed for encryption key derivation
     },
     /// Server: KnownResponse sent (Known Mode), awaiting KnownFinish.
     KnownResponseSent {
@@ -664,13 +665,14 @@ impl Session {
             supported_versions: self.config.supported_versions.clone(),
             min_version: self.config.min_version,
             supported_ciphers: self.config.supported_ciphers.clone(),
-            opaque_credential_request: credential_request,
+            opaque_credential_request: credential_request.clone(),
             random: client_random,
         };
 
         self.state = SessionState::KnownHelloSent {
             client_random,
             opaque_client_state: client_state,
+            opaque_credential_request: credential_request,
         };
 
         Ok(frame)
@@ -692,12 +694,13 @@ impl Session {
         credential_identifier: &[u8],
     ) -> Result<Frame> {
         // Extract state
-        let (client_random, opaque_client_state) =
+        let (client_random, opaque_client_state, opaque_credential_request) =
             match std::mem::replace(&mut self.state, SessionState::Idle) {
                 SessionState::KnownHelloSent {
                     client_random,
                     opaque_client_state,
-                } => (client_random, opaque_client_state),
+                    opaque_credential_request,
+                } => (client_random, opaque_client_state, opaque_credential_request),
                 old_state => {
                     self.state = old_state;
                     return Err(Error::InvalidState);
@@ -737,6 +740,16 @@ impl Session {
             return Err(Error::ProtocolViolation("Unsupported cipher".into()));
         }
 
+        // Derive encryption key from OPAQUE CredentialRequest + CredentialResponse
+        // (same as server-side derivation)
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"zp-known-mode-mlkem-encryption");
+        hasher.update(&opaque_credential_request);  // CredentialRequest we sent in KnownHello
+        hasher.update(&opaque_credential_response);
+        let encryption_key_hash = hasher.finalize();
+        let encryption_key: [u8; 32] = encryption_key_hash.into();
+
         // Complete OPAQUE login (client side)
         use zp_crypto::pake;
         let (opaque_finalization, opaque_session_key) = pake::login_finalize(
@@ -747,13 +760,9 @@ impl Session {
         )
         .map_err(|e| Error::ProtocolViolation(format!("OPAQUE login_finalize failed: {}", e)))?;
 
-        // Derive encryption key from OPAQUE session_key
-        // OPAQUE session_key is 64 bytes, we use first 32 bytes for AES-256-GCM
-        let encryption_key = &opaque_session_key[..32];
-
         // Decrypt ML-KEM public key
         let mlkem_pubkey =
-            self.decrypt_mlkem_pubkey(encryption_key, &server_random, &mlkem_pubkey_encrypted)?;
+            self.decrypt_mlkem_pubkey(&encryption_key, &server_random, &mlkem_pubkey_encrypted)?;
 
         self.state = SessionState::KnownFinishReady {
             client_random,
@@ -938,12 +947,13 @@ impl Session {
         // The spec says server sends encrypted ML-KEM pubkey in KnownResponse,
         // but OPAQUE only gives us session_key after both parties complete the protocol.
         //
-        // WORKAROUND: Derive intermediate encryption key from OPAQUE server_login_state.
-        // This is secure because server_login_state contains ephemeral secrets.
+        // WORKAROUND: Derive intermediate encryption key from OPAQUE CredentialRequest + CredentialResponse.
+        // Both parties have both messages at encryption/decryption time.
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"zp-known-mode-mlkem-encryption");
-        hasher.update(&server_login_state);
+        hasher.update(&opaque_credential_request);
+        hasher.update(&credential_response);
         let encryption_key_hash = hasher.finalize();
         let encryption_key: [u8; 32] = encryption_key_hash.into();
 

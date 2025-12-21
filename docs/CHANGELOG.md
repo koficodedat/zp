@@ -25,13 +25,19 @@
   - Session integration: `crates/zp-core/src/session.rs` (1500+ lines)
     - 4 Known Mode methods: client_start_known, client_process_known_response, server_process_known_hello, server_process_known_finish
     - Hybrid key derivation: HKDF(opaque_session_key || mlkem_shared_secret)
-    - AES-256-GCM encryption for ML-KEM exchange using OPAQUE session_key (first 32 bytes)
+    - AES-256-GCM encryption for ML-KEM exchange using intermediate key derived from CredentialRequest + CredentialResponse
     - Nonce derivation: SHA-256(server_random)[0:12] for ML-KEM pubkey, SHA-256(client_random)[0:12] for ciphertext
-    - 3 new SessionState variants: KnownHelloSent, KnownResponseSent, KnownFinishReady
+    - 3 new SessionState variants: KnownHelloSent (with credential_request), KnownResponseSent, KnownFinishReady
     - Test coverage: All 38 unit tests passing
   - Frame updates: KnownHello/KnownResponse/KnownFinish use OPAQUE messages (variable length with u16 length prefixes)
-  - Status: OPAQUE integration complete, full Known Mode handshake working
-  - Remaining: Add conformance tests, generate OPAQUE test vectors, update §4.3 spec (mark as v1.1)
+  - Conformance tests: `tests/conformance/session_test.rs` (5 new tests, all passing)
+    - test_opaque_registration_flow: Validates 4-step OPAQUE registration
+    - test_opaque_login_flow: Validates 4-step OPAQUE login with matching session keys
+    - test_known_mode_full_handshake: End-to-end Known Mode handshake with OPAQUE + ML-KEM
+    - test_known_mode_wrong_password_fails: Password mismatch detection
+    - test_known_mode_key_derivation: Hybrid OPAQUE + ML-KEM key derivation validation
+  - Status: OPAQUE integration complete, full Known Mode handshake working, conformance tests passing
+  - Remaining: Generate OPAQUE test vectors for TEST_VECTORS.md, update §4.3 spec (mark as v1.1)
   - Spec impact: §4.3 rewrite required (mark as v1.1 per DA-0001)
   - Related: docs/decisions/DA-0001.md (full escalation + resolution)
 - X25519 key exchange implementation (zp-crypto)

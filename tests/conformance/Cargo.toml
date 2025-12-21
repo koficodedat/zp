@@ -9,6 +9,8 @@ zp-core = { path = "../../crates/zp-core" }
 zp-crypto = { path = "../../crates/zp-crypto" }
 hex = "0.4"
 sha2 = "0.10"
+rand = "0.8"
+zeroize = "1.8"
 
 [[test]]
 name = "crypto"
