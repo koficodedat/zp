@@ -1,16 +1,39 @@
 {
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '\\n⚠️  zp project: Run /zp-start to disable unused global MCPs (github, chrome-devtools, playwright, memory)\\n'"
-          }
-        ]
-      }
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo:*)",
+      "Bash(rustfmt:*)",
+      "Bash(./tools/scripts:*)",
+      "Bash(git status)",
+      "Bash(git diff)",
+      "Bash(git log:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Read(**/*.rs)",
+      "Read(**/*.toml)",
+      "Read(**/*.md)",
+      "Write(crates/**/*.rs)",
+      "Write(tests/**/*.rs)",
+      "Edit(crates/**/*.rs)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(cargo publish:*)",
+      "Write(.env*)"
     ]
+  },
+  "mcpServers": {
+    "chrome-devtools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ],
+      "env": {}
+    }
   },
   "enabledPlugins": {
     "context7@claude-plugins-official": true
