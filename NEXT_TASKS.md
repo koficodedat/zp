@@ -554,7 +554,8 @@ All five quality gate tasks completed successfully:
 - [x] DA-0001 escalation and resolution
 - [x] opaque-ke v3.0 dependency added to Cargo.toml
 - [x] Initial pake.rs wrapper created (needs API fixes)
-- [ ] Fix opaque-ke API usage (compilation errors)
+- [x] Fix opaque-ke API usage (compilation errors) ✅ COMPLETE
+- [x] OPAQUE wrapper fully functional (462 lines, 8 functions, 3 tests passing)
 - [ ] Update KnownHello/KnownResponse/KnownFinish frames for OPAQUE
 - [ ] Implement Session Known Mode methods
 - [ ] Add OPAQUE+ML-KEM key derivation
@@ -564,9 +565,9 @@ All five quality gate tasks completed successfully:
 - [ ] crypto-impl agent review
 
 **Acceptance criteria:**
-- [x] OPAQUE implementation via opaque-ke crate (NCC audited)
-- [ ] Registration flow: `registration_start() → response() → finalize() → complete()`
-- [ ] Login flow: `login_start() → response() → finalize() → complete()`
+- [x] OPAQUE implementation via opaque-ke crate (NCC audited) ✅
+- [x] Registration flow: `registration_start() → response() → finalize() → complete()` ✅
+- [x] Login flow: `login_start() → response() → finalize() → complete()` ✅
 - [ ] Session::known_mode_client_login_start() - Generate KnownHello with CredentialRequest
 - [ ] Session::known_mode_server_login_process() - Process request, generate CredentialResponse
 - [ ] Session::known_mode_client_login_finish() - Derive session_key + ML-KEM exchange

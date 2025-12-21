@@ -18,8 +18,12 @@
   - Registration phase: 4-step flow (start → response → finalize → complete)
   - Login phase: 4-step flow (start → response → finalize → complete)
   - Hybrid with ML-KEM: OPAQUE session_key encrypts ML-KEM exchange (like SPAKE2+ before)
-  - File: `crates/zp-crypto/src/pake.rs` (Ristretto255 cipher suite)
-  - Status: Initial wrapper created, needs API fixes for compilation
+  - File: `crates/zp-crypto/src/pake.rs` (462 lines, Ristretto255 cipher suite)
+  - 8 public functions: registration_start/response/finalize/complete + login_start/response/finalize/complete
+  - All secrets wrapped in Zeroizing<> for automatic cleanup
+  - Test coverage: 3 tests passing (registration flow, login flow, wrong password rejection)
+  - Status: OPAQUE wrapper complete, compiles cleanly, all tests passing
+  - Next: Integrate with Known Mode frames (KnownHello/KnownResponse/KnownFinish)
   - Spec impact: §4.3 rewrite required (mark as v1.1 per DA-0001)
   - Related: docs/decisions/DA-0001.md (full escalation + resolution)
 - X25519 key exchange implementation (zp-crypto)
