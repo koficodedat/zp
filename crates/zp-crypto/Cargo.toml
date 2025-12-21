@@ -9,11 +9,11 @@ homepage.workspace = true
 description = "Cryptographic primitives for the zp transport protocol"
 
 [dependencies]
-# Approved cryptographic crates (per crypto-impl agent)
+# Approved cryptographic crates (per crypto-impl agent + DA-0001)
 ring = { workspace = true }
 ml-kem = { workspace = true }
 kem = { workspace = true }
-spake2 = { workspace = true }
+opaque-ke = { workspace = true }  # NCC Group audited, replaces spake2 per DA-0001
 chacha20poly1305 = { workspace = true }
 aes-gcm = { workspace = true }
 hkdf = { workspace = true }

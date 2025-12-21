@@ -18,12 +18,12 @@ repository = "https://github.com/yourorg/zp"
 homepage = "https://github.com/yourorg/zp"
 
 [workspace.dependencies]
-# Cryptography (approved per crypto-impl agent)
+# Cryptography (approved per crypto-impl agent + DA-0001)
 ring = "0.17"
 aws-lc-rs = "1.8"
 ml-kem = "0.2"
 kem = "0.3.0-pre.0"
-spake2 = "0.4"
+opaque-ke = "3.0"  # NCC Group audited (2021), replaces spake2 per DA-0001
 chacha20poly1305 = "0.10"
 aes-gcm = "0.10"
 hkdf = "0.12"
