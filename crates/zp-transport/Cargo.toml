@@ -18,6 +18,10 @@ quinn = { workspace = true }
 rustls = { workspace = true }
 rcgen = { workspace = true }
 
+# WebSocket transport
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+
 # Async runtime
 tokio = { workspace = true }
 

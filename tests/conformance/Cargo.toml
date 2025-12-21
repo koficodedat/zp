@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 zp-core = { path = "../../crates/zp-core" }
 zp-crypto = { path = "../../crates/zp-crypto" }
-zp-transport = { path = "../../crates/zp-transport" }
+zp-transport = { path = "../../crates/zp-transport", features = ["websocket"] }
 tokio = { workspace = true }
 rustls = { workspace = true }
 hex = "0.4"
@@ -30,3 +30,7 @@ path = "session_test.rs"
 [[test]]
 name = "quic"
 path = "quic_spec_3_4.rs"
+
+[[test]]
+name = "websocket"
+path = "websocket_spec_appendix_d.rs"
