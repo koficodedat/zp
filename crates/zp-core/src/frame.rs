@@ -108,6 +108,9 @@ pub enum Frame {
 
     // === Handshake frames (Known Mode) ===
     /// KnownHello - Known Mode handshake initiation (§4.3.1).
+    ///
+    /// Changed from SPAKE2+ to OPAQUE per DA-0001 (2025-12-20).
+    /// Uses OPAQUE CredentialRequest instead of SPAKE2+ message A.
     KnownHello {
         /// Supported protocol versions in descending preference.
         supported_versions: Vec<u16>,
@@ -115,20 +118,23 @@ pub enum Frame {
         min_version: u16,
         /// Supported cipher suites in descending preference.
         supported_ciphers: Vec<u8>,
-        /// SPAKE2+ message A (32 bytes).
-        spake2_message_a: [u8; 32],
+        /// OPAQUE CredentialRequest (variable length, serialized from opaque-ke).
+        opaque_credential_request: Vec<u8>,
         /// Client random nonce (32 bytes).
         random: [u8; 32],
     },
 
     /// KnownResponse - Known Mode server response (§4.3.2).
+    ///
+    /// Changed from SPAKE2+ to OPAQUE per DA-0001 (2025-12-20).
+    /// Uses OPAQUE CredentialResponse instead of SPAKE2+ message B.
     KnownResponse {
         /// Selected protocol version.
         selected_version: u16,
         /// Selected cipher suite.
         selected_cipher: u8,
-        /// SPAKE2+ message B (32 bytes).
-        spake2_message_b: [u8; 32],
+        /// OPAQUE CredentialResponse (variable length, serialized from opaque-ke).
+        opaque_credential_response: Vec<u8>,
         /// Server random nonce (32 bytes).
         random: [u8; 32],
         /// Encrypted ML-KEM public key (1200 bytes for ML-KEM-768, 1584 bytes for ML-KEM-1024).
@@ -136,7 +142,12 @@ pub enum Frame {
     },
 
     /// KnownFinish - Known Mode client finish (§4.3.3).
+    ///
+    /// Changed from SPAKE2+ to OPAQUE per DA-0001 (2025-12-20).
+    /// Now includes OPAQUE CredentialFinalization before encrypted ML-KEM ciphertext.
     KnownFinish {
+        /// OPAQUE CredentialFinalization (variable length, serialized from opaque-ke).
+        opaque_credential_finalization: Vec<u8>,
         /// Encrypted ML-KEM ciphertext (1104 bytes for ML-KEM-768, 1584 bytes for ML-KEM-1024).
         mlkem_ciphertext_encrypted: Vec<u8>,
     },
@@ -521,10 +532,14 @@ impl Frame {
             offset += 1;
         }
 
-        check_len(data, offset + 32)?;
-        let mut spake2_message_a = [0u8; 32];
-        spake2_message_a.copy_from_slice(&data[offset..offset + 32]);
-        offset += 32;
+        // OPAQUE CredentialRequest (variable length) - DA-0001
+        check_len(data, offset + 2)?;
+        let credential_request_len = read_u16_le(&data[offset..offset + 2]) as usize;
+        offset += 2;
+
+        check_len(data, offset + credential_request_len)?;
+        let opaque_credential_request = data[offset..offset + credential_request_len].to_vec();
+        offset += credential_request_len;
 
         check_len(data, offset + 32)?;
         let mut random = [0u8; 32];
@@ -534,7 +549,7 @@ impl Frame {
             supported_versions,
             min_version,
             supported_ciphers,
-            spake2_message_a,
+            opaque_credential_request,
             random,
         })
     }
@@ -544,7 +559,7 @@ impl Frame {
             supported_versions,
             min_version,
             supported_ciphers,
-            spake2_message_a,
+            opaque_credential_request,
             random,
         } = self
         {
@@ -558,7 +573,9 @@ impl Frame {
             buf.extend_from_slice(&min_version.to_le_bytes());
             buf.push(supported_ciphers.len() as u8);
             buf.extend_from_slice(supported_ciphers);
-            buf.extend_from_slice(spake2_message_a);
+            // OPAQUE CredentialRequest (variable length) - DA-0001
+            buf.extend_from_slice(&(opaque_credential_request.len() as u16).to_le_bytes());
+            buf.extend_from_slice(opaque_credential_request);
             buf.extend_from_slice(random);
             Ok(buf)
         } else {
@@ -579,10 +596,14 @@ impl Frame {
         let selected_cipher = data[offset];
         offset += 1;
 
-        check_len(data, offset + 32)?;
-        let mut spake2_message_b = [0u8; 32];
-        spake2_message_b.copy_from_slice(&data[offset..offset + 32]);
-        offset += 32;
+        // OPAQUE CredentialResponse (variable length) - DA-0001
+        check_len(data, offset + 2)?;
+        let credential_response_len = read_u16_le(&data[offset..offset + 2]) as usize;
+        offset += 2;
+
+        check_len(data, offset + credential_response_len)?;
+        let opaque_credential_response = data[offset..offset + credential_response_len].to_vec();
+        offset += credential_response_len;
 
         check_len(data, offset + 32)?;
         let mut random = [0u8; 32];
@@ -599,7 +620,7 @@ impl Frame {
         Ok(Frame::KnownResponse {
             selected_version,
             selected_cipher,
-            spake2_message_b,
+            opaque_credential_response,
             random,
             mlkem_pubkey_encrypted,
         })
@@ -609,7 +630,7 @@ impl Frame {
         if let Frame::KnownResponse {
             selected_version,
             selected_cipher,
-            spake2_message_b,
+            opaque_credential_response,
             random,
             mlkem_pubkey_encrypted,
         } = self
@@ -619,7 +640,9 @@ impl Frame {
             buf.push(TYPE_KNOWN_RESPONSE);
             buf.extend_from_slice(&selected_version.to_le_bytes());
             buf.push(*selected_cipher);
-            buf.extend_from_slice(spake2_message_b);
+            // OPAQUE CredentialResponse (variable length) - DA-0001
+            buf.extend_from_slice(&(opaque_credential_response.len() as u16).to_le_bytes());
+            buf.extend_from_slice(opaque_credential_response);
             buf.extend_from_slice(random);
             buf.extend_from_slice(&(mlkem_pubkey_encrypted.len() as u16).to_le_bytes());
             buf.extend_from_slice(mlkem_pubkey_encrypted);
@@ -632,23 +655,44 @@ impl Frame {
     // === KnownFinish (§4.3.3) ===
 
     fn parse_known_finish(data: &[u8]) -> Result<Self> {
-        check_len(data, 2)?;
-        let mlkem_ciphertext_encrypted_len = read_u16_le(&data[0..2]) as usize;
-        check_len(data, 2 + mlkem_ciphertext_encrypted_len)?;
-        let mlkem_ciphertext_encrypted = data[2..2 + mlkem_ciphertext_encrypted_len].to_vec();
+        let mut offset = 0;
+
+        // OPAQUE CredentialFinalization (variable length) - DA-0001
+        check_len(data, offset + 2)?;
+        let credential_finalization_len = read_u16_le(&data[offset..offset + 2]) as usize;
+        offset += 2;
+
+        check_len(data, offset + credential_finalization_len)?;
+        let opaque_credential_finalization =
+            data[offset..offset + credential_finalization_len].to_vec();
+        offset += credential_finalization_len;
+
+        check_len(data, offset + 2)?;
+        let mlkem_ciphertext_encrypted_len = read_u16_le(&data[offset..offset + 2]) as usize;
+        offset += 2;
+
+        check_len(data, offset + mlkem_ciphertext_encrypted_len)?;
+        let mlkem_ciphertext_encrypted =
+            data[offset..offset + mlkem_ciphertext_encrypted_len].to_vec();
+
         Ok(Frame::KnownFinish {
+            opaque_credential_finalization,
             mlkem_ciphertext_encrypted,
         })
     }
 
     fn serialize_known_finish(&self) -> Result<Vec<u8>> {
         if let Frame::KnownFinish {
+            opaque_credential_finalization,
             mlkem_ciphertext_encrypted,
         } = self
         {
             let mut buf = Vec::new();
             buf.extend_from_slice(&MAGIC_KNOWN_FINISH.to_le_bytes());
             buf.push(TYPE_KNOWN_FINISH);
+            // OPAQUE CredentialFinalization (variable length) - DA-0001
+            buf.extend_from_slice(&(opaque_credential_finalization.len() as u16).to_le_bytes());
+            buf.extend_from_slice(opaque_credential_finalization);
             buf.extend_from_slice(&(mlkem_ciphertext_encrypted.len() as u16).to_le_bytes());
             buf.extend_from_slice(mlkem_ciphertext_encrypted);
             Ok(buf)

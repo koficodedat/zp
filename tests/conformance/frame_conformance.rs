@@ -107,11 +107,15 @@ fn test_client_finish_format() {
 /// Test KnownHello frame format per spec §4.3.1.
 #[test]
 fn test_known_hello_format() {
+    // NOTE: Using placeholder OPAQUE CredentialRequest per DA-0001
+    // TODO: Replace with actual OPAQUE message from test vectors
+    let opaque_request = vec![0x11; 64]; // Placeholder for OPAQUE CredentialRequest
+
     let frame = Frame::KnownHello {
         supported_versions: vec![0x0100],
         min_version: 0x0100,
         supported_ciphers: vec![0x01],
-        spake2_message_a: [0x11; 32],
+        opaque_credential_request: opaque_request,
         random: [0x22; 32],
     };
 
@@ -134,12 +138,15 @@ fn test_known_hello_format() {
 /// Test KnownResponse frame format per spec §4.3.2.
 #[test]
 fn test_known_response_format() {
+    // NOTE: Using placeholder OPAQUE CredentialResponse per DA-0001
+    // TODO: Replace with actual OPAQUE message from test vectors
+    let opaque_response = vec![0x44; 128]; // Placeholder for OPAQUE CredentialResponse
     let mlkem_encrypted = vec![0xEF; 1200]; // Encrypted ML-KEM-768 pubkey
 
     let frame = Frame::KnownResponse {
         selected_version: 0x0100,
         selected_cipher: 0x01,
-        spake2_message_b: [0x44; 32],
+        opaque_credential_response: opaque_response,
         random: [0x55; 32],
         mlkem_pubkey_encrypted: mlkem_encrypted,
     };
@@ -163,9 +170,13 @@ fn test_known_response_format() {
 /// Test KnownFinish frame format per spec §4.3.3.
 #[test]
 fn test_known_finish_format() {
+    // NOTE: Using placeholder OPAQUE CredentialFinalization per DA-0001
+    // TODO: Replace with actual OPAQUE message from test vectors
+    let opaque_finalization = vec![0xCC; 96]; // Placeholder for OPAQUE CredentialFinalization
     let mlkem_ct_encrypted = vec![0xF0; 1104]; // Encrypted ML-KEM-768 ciphertext
 
     let frame = Frame::KnownFinish {
+        opaque_credential_finalization: opaque_finalization,
         mlkem_ciphertext_encrypted: mlkem_ct_encrypted,
     };
 
