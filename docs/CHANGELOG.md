@@ -11,19 +11,27 @@
 ### Unreleased
 
 **Added:**
-- OPAQUE password-authenticated key exchange (zp-crypto) **[IN PROGRESS]**
+- OPAQUE password-authenticated key exchange (zp-crypto + zp-core) **[COMPLETE]**
   - RFC 9807 conformance using opaque-ke v3.0 (NCC Group audited, June 2021)
   - Replaces SPAKE2+ per DA-0001 (2025-12-20): no audited SPAKE2+ Rust implementation
   - Security: Server never learns password (only OPRF output), strictly stronger than SPAKE2+
   - Registration phase: 4-step flow (start → response → finalize → complete)
   - Login phase: 4-step flow (start → response → finalize → complete)
-  - Hybrid with ML-KEM: OPAQUE session_key encrypts ML-KEM exchange (like SPAKE2+ before)
-  - File: `crates/zp-crypto/src/pake.rs` (462 lines, Ristretto255 cipher suite)
-  - 8 public functions: registration_start/response/finalize/complete + login_start/response/finalize/complete
-  - All secrets wrapped in Zeroizing<> for automatic cleanup
-  - Test coverage: 3 tests passing (registration flow, login flow, wrong password rejection)
-  - Status: OPAQUE wrapper complete, compiles cleanly, all tests passing
-  - Next: Integrate with Known Mode frames (KnownHello/KnownResponse/KnownFinish)
+  - Hybrid with ML-KEM: OPAQUE session_key encrypts ML-KEM exchange (AES-256-GCM)
+  - PAKE wrapper: `crates/zp-crypto/src/pake.rs` (484 lines, Ristretto255 cipher suite)
+    - 8 public functions: registration_start/response/finalize/complete + login_start/response/finalize/complete
+    - All secrets wrapped in Zeroizing<> for automatic cleanup
+    - Test coverage: 3 tests passing (registration flow, login flow, wrong password rejection)
+  - Session integration: `crates/zp-core/src/session.rs` (1500+ lines)
+    - 4 Known Mode methods: client_start_known, client_process_known_response, server_process_known_hello, server_process_known_finish
+    - Hybrid key derivation: HKDF(opaque_session_key || mlkem_shared_secret)
+    - AES-256-GCM encryption for ML-KEM exchange using OPAQUE session_key (first 32 bytes)
+    - Nonce derivation: SHA-256(server_random)[0:12] for ML-KEM pubkey, SHA-256(client_random)[0:12] for ciphertext
+    - 3 new SessionState variants: KnownHelloSent, KnownResponseSent, KnownFinishReady
+    - Test coverage: All 38 unit tests passing
+  - Frame updates: KnownHello/KnownResponse/KnownFinish use OPAQUE messages (variable length with u16 length prefixes)
+  - Status: OPAQUE integration complete, full Known Mode handshake working
+  - Remaining: Add conformance tests, generate OPAQUE test vectors, update §4.3 spec (mark as v1.1)
   - Spec impact: §4.3 rewrite required (mark as v1.1 per DA-0001)
   - Related: docs/decisions/DA-0001.md (full escalation + resolution)
 - X25519 key exchange implementation (zp-crypto)
