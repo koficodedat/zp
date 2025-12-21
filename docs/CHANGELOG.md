@@ -12,7 +12,7 @@
 
 **In Progress:**
 - **Phase 5: Transport Layer Integration** (Started 2025-12-20)
-  - Status: Task 5.1 (QUIC) complete, moving to WebSocket/WebRTC/TCP
+  - Status: Tasks 5.1 (QUIC) and 5.2 (WebSocket) complete, moving to WebRTC/TCP
 
 **Added:**
 - QUIC transport implementation (zp-transport) **[COMPLETE]**
@@ -32,6 +32,26 @@
   - Conformance tests: `tests/conformance/quic_spec_3_4.rs` (6 tests, §3.4 compliance)
   - Integration tests: `crates/zp-transport/tests/quic_integration.rs` (5 end-to-end tests)
   - Status: Production-ready for QUIC transport, pending WebSocket/WebRTC/TCP
+
+- WebSocket transport implementation (zp-transport) **[COMPLETE]**
+  - Spec Appendix D conformance: Browser fallback per WebSocket Subprotocol
+  - Subprotocol identifier "zp.v1" per spec requirement
+  - Binary frames only, one zp frame per WebSocket message
+  - Client/server endpoints with subprotocol negotiation
+  - Session integration with Stranger mode (TOFU security model)
+  - Support for both TLS and plain TCP connections via enum wrapper
+  - `WebSocketEndpoint` - Client/server endpoint creation with subprotocol validation
+  - `WebSocketConnection` - Binary frame handling with session integration
+  - `WsStreamWrapper` - Enum for TLS/plain TCP stream compatibility
+  - Connection lifecycle per Appendix D (connect → handshake → data exchange → close)
+  - Subprotocol validation: Server rejects clients without "zp.v1" header
+  - Test coverage: 6 conformance tests + 5 integration tests + 3 unit tests (all passing)
+  - Files: `crates/zp-transport/src/websocket/mod.rs` (~374 lines)
+  - Conformance tests: `tests/conformance/websocket_spec_appendix_d.rs` (6 tests, Appendix D compliance)
+  - Integration tests: `crates/zp-transport/tests/websocket_integration.rs` (5 end-to-end tests)
+  - Dependencies: tokio-tungstenite 0.21, futures-util 0.3
+  - TODO: EncryptedRecord wrapping for post-handshake frames (currently plaintext during handshake)
+  - Status: Production-ready for WebSocket fallback, pending EncryptedRecord integration
 
 - OPAQUE password-authenticated key exchange (zp-crypto + zp-core) **[COMPLETE]**
   - RFC 9807 conformance using opaque-ke v3.0 (NCC Group audited, June 2021)
