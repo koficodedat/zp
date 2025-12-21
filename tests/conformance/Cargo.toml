@@ -7,13 +7,15 @@ publish = false
 [dependencies]
 zp-core = { path = "../../crates/zp-core" }
 zp-crypto = { path = "../../crates/zp-crypto" }
-zp-transport = { path = "../../crates/zp-transport", features = ["websocket"] }
+zp-transport = { path = "../../crates/zp-transport", features = ["websocket", "webrtc"] }
 tokio = { workspace = true }
 rustls = { workspace = true }
 hex = "0.4"
 sha2 = "0.10"
 rand = "0.8"
 zeroize = "1.8"
+async-trait = "0.1"
+webrtc = { workspace = true }
 
 [[test]]
 name = "crypto"
@@ -34,3 +36,7 @@ path = "quic_spec_3_4.rs"
 [[test]]
 name = "websocket"
 path = "websocket_spec_appendix_d.rs"
+
+[[test]]
+name = "webrtc"
+path = "webrtc_spec_sections_5_and_6_4.rs"
