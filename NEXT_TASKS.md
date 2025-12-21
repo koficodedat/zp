@@ -797,3 +797,165 @@ Push to 80% coverage target:
 
 **Recommended:** Option B (Transport Layer) - Core protocol is production-ready, remaining 8% coverage gap is acceptable for continued development. Transport integration is the critical path for end-to-end functionality.
 
+---
+
+## Phase 5: Transport Layer Integration
+
+**Status:** 🟡 IN PROGRESS (Started 2025-12-20)
+
+**Goal:** Integrate zp protocol engine with real-world transport layers (QUIC, WebSocket, WebRTC, TCP).
+
+### Task 5.1: QUIC Transport Integration 🔄 IN PROGRESS
+**Priority:** P0 (critical path for production deployment)
+**File:** `crates/zp-transport/src/quic.rs`
+**Status:** 🔄 In Progress - Architecture design phase
+**Spec Reference:** §3.4 (QUIC Stream Mapping), §3.1 (BBR v2)
+**Effort Estimate:** LARGE (32-40 hours)
+
+**Current Progress:**
+- [x] Spec §3.4 reviewed (QUIC Stream Mapping)
+- [x] quinn dependency verified in Cargo.toml
+- [x] Current stub implementation analyzed
+- [ ] Architecture design (QuicEndpoint, QuicConnection, QuicStream)
+- [ ] Implement QuicEndpoint (client/server creation, certificate handling)
+- [ ] Implement QuicConnection (handshake, control stream initialization)
+- [ ] Implement QuicStream (stream 0 for control, data streams 4+)
+- [ ] Implement stream ID mapping per spec §3.4
+- [ ] Add control stream enforcement (reject data on stream 0)
+- [ ] Integrate with zp-core Session and Frame types
+- [ ] Add unit tests
+- [ ] Add integration tests
+- [ ] Add conformance tests for spec §3.4
+
+**Spec §3.4 Key Requirements:**
+- Direct 1:1 mapping: `zp_stream_id = QUIC_stream_id`
+- Stream 0: Control stream (client opens immediately after QUIC handshake)
+- Client streams: 0, 4, 8, 12... (even, per RFC 9000 §2.1)
+- Server streams: 1, 5, 9, 13... (odd, per RFC 9000 §2.1)
+- Control stream initialization: Send WindowUpdate(stream_id=0, increment=ZP_INITIAL_CONN_WINDOW)
+- No EncryptedRecord wrapper on QUIC (native QUIC encryption)
+- Control frames use magic-prefixed format for dispatch
+- Reject unidirectional streams with STREAM_STATE_ERROR
+- Data frames on stream 0 → ERR_PROTOCOL_VIOLATION (0x0E)
+
+**Architecture Components:**
+1. **QuicEndpoint**
+   - Client/server mode configuration
+   - Certificate handling (self-signed for dev, trusted for prod)
+   - BBR v2 congestion control configuration
+   - Connection acceptance (server) / initiation (client)
+
+2. **QuicConnection**
+   - QUIC handshake completion
+   - Control stream (stream 0) initialization
+   - Stream ID allocation (even for client, odd for server)
+   - Integration with zp Session state machine
+
+3. **QuicStream**
+   - Stream 0: Control frames only (KeyUpdate, WindowUpdate, Sync-Frame, AckFrame)
+   - Data streams: DataFrame, application data
+   - Frame parsing and dispatch (magic number based)
+   - Flow control integration with zp-core Stream
+
+**Acceptance Criteria:**
+- [ ] QuicEndpoint can create client/server endpoints
+- [ ] QuicConnection establishes QUIC handshake
+- [ ] Control stream (stream 0) opens immediately after handshake
+- [ ] Client sends WindowUpdate on stream 0 per spec §3.4
+- [ ] Data frames rejected on stream 0 (ERR_PROTOCOL_VIOLATION)
+- [ ] Stream ID mapping matches QUIC stream IDs (direct 1:1)
+- [ ] Unidirectional streams rejected (STREAM_STATE_ERROR)
+- [ ] BBR v2 congestion control active (quinn default)
+- [ ] Integration with zp-core Session and Frame types
+- [ ] Full end-to-end test: client connects, opens stream 0, sends control frame
+- [ ] Conformance tests validate spec §3.4 requirements
+
+**Blocking Dependencies:** None (quinn dependency available)
+
+**Related Spec Sections:**
+- §3.4: QUIC Stream Mapping
+- §3.1: Primary Engine (BBR v2 congestion control)
+- §3.3.9: WindowUpdate Frame Format
+- §3.3.10: DataFrame Format
+- §3.3.12: ErrorFrame Format
+
+---
+
+### Task 5.2: WebSocket Transport
+**Priority:** P1 (web browser support)
+**File:** `crates/zp-transport/src/websocket.rs`
+**Status:** 🔲 Planned
+**Spec Reference:** Appendix D
+**Effort Estimate:** MEDIUM (16-24 hours)
+
+**Acceptance Criteria:**
+- [ ] WebSocket client/server using tokio-tungstenite
+- [ ] EncryptedRecord wrapper for all frames (WebSocket lacks native encryption)
+- [ ] Stream multiplexing over single WebSocket connection
+- [ ] Integration with zp-core Session
+
+**Blocking Dependencies:** Task 5.1 (QUIC transport patterns)
+
+---
+
+### Task 5.3: WebRTC DataChannel Transport
+**Priority:** P1 (peer-to-peer, NAT traversal)
+**File:** `crates/zp-transport/src/webrtc.rs`
+**Status:** 🔲 Planned
+**Spec Reference:** §5
+**Effort Estimate:** LARGE (40-48 hours)
+
+**Acceptance Criteria:**
+- [ ] WebRTC DataChannel transport using webrtc-rs
+- [ ] SCTP stream mapping (similar to QUIC)
+- [ ] STUN/TURN support for NAT traversal
+- [ ] Integration with zp-core Session
+
+**Blocking Dependencies:** Task 5.1 (QUIC transport patterns)
+
+---
+
+### Task 5.4: TCP Fallback Transport
+**Priority:** P2 (legacy support)
+**File:** `crates/zp-transport/src/tcp.rs`
+**Status:** 🔲 Planned
+**Spec Reference:** §3.3.7 (StreamChunk)
+**Effort Estimate:** SMALL (8-12 hours)
+
+**Acceptance Criteria:**
+- [ ] TCP transport with StreamChunk framing
+- [ ] Length-prefixed frame serialization
+- [ ] EncryptedRecord wrapper for all frames
+- [ ] Integration with zp-core Session
+
+**Blocking Dependencies:** Task 5.1 (QUIC transport patterns)
+
+---
+
+## Phase 5 Summary
+
+**Total Effort Estimate:** 96-124 hours (12-15.5 days @ 8 hours/day)
+
+**Priority Breakdown:**
+- Task 5.1 (QUIC): P0 - LARGE (32-40 hours)
+- Task 5.2 (WebSocket): P1 - MEDIUM (16-24 hours)
+- Task 5.3 (WebRTC): P1 - LARGE (40-48 hours)
+- Task 5.4 (TCP): P2 - SMALL (8-12 hours)
+
+**Quality Gates for Phase 5:**
+- [ ] All 4 transport types implemented
+- [ ] End-to-end integration tests for each transport
+- [ ] QUIC control stream (stream 0) working per spec §3.4
+- [ ] WebSocket EncryptedRecord wrapper working
+- [ ] WebRTC SCTP stream mapping working
+- [ ] TCP StreamChunk framing working
+- [ ] Test coverage >70% for zp-transport
+- [ ] Zero clippy warnings
+- [ ] Conformance tests for QUIC stream mapping
+
+**Recommended Order:**
+1. Task 5.1 (QUIC) - Foundation for other transports, spec §3.4 is detailed
+2. Task 5.2 (WebSocket) - Simpler transport, reuses QUIC patterns
+3. Task 5.3 (WebRTC) - Complex, requires STUN/TURN integration
+4. Task 5.4 (TCP) - Lowest priority, legacy fallback
+

@@ -10,6 +10,14 @@
 
 ### Unreleased
 
+**In Progress:**
+- **Phase 5: Transport Layer Integration** (Started 2025-12-20)
+  - QUIC transport implementation using quinn crate
+  - Direct stream ID mapping per spec §3.4
+  - Control stream (stream 0) enforcement
+  - BBR v2 congestion control integration
+  - Status: Architecture design in progress
+
 **Added:**
 - OPAQUE password-authenticated key exchange (zp-crypto + zp-core) **[COMPLETE]**
   - RFC 9807 conformance using opaque-ke v3.0 (NCC Group audited, June 2021)
