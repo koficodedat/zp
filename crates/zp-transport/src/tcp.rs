@@ -332,8 +332,7 @@ impl TcpConnection {
 
     /// Get local address
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        self
-            .stream
+        self.stream
             .blocking_read()
             .local_addr()
             .map_err(|e| Error::ConnectionFailed(format!("Failed to get local addr: {}", e)))

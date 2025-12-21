@@ -191,6 +191,12 @@ pub struct SessionKeys {
     pub key_epoch: u32,
     /// Pending key rotation epoch (if waiting for ack).
     pub pending_epoch: Option<u32>,
+    /// Send nonce counter for EncryptedRecord (§3.3.13).
+    /// Increments for each outbound encrypted frame.
+    pub send_nonce: u64,
+    /// Receive nonce counter for EncryptedRecord (§3.3.13).
+    /// Expected value for next inbound encrypted frame.
+    pub recv_nonce: u64,
 }
 
 /// Generate 32 random bytes using a cryptographically secure RNG.
@@ -1260,6 +1266,8 @@ impl Session {
             recv_key,
             key_epoch: 0,        // Initial epoch is 0
             pending_epoch: None, // No pending rotation initially
+            send_nonce: 0,       // EncryptedRecord nonce counter starts at 0
+            recv_nonce: 0,       // EncryptedRecord nonce counter starts at 0
         })
     }
 
@@ -1320,6 +1328,8 @@ impl Session {
             recv_key,
             key_epoch: 0,
             pending_epoch: None,
+            send_nonce: 0, // EncryptedRecord nonce counter starts at 0
+            recv_nonce: 0, // EncryptedRecord nonce counter starts at 0
         })
     }
 
@@ -1795,6 +1805,284 @@ impl Session {
 
         Ok(())
     }
+
+    // === EncryptedRecord encryption/decryption (§3.3.13) ===
+
+    /// Encrypt a frame for non-QUIC transports per spec §3.3.13.
+    ///
+    /// Wraps the frame in an EncryptedRecord using AEAD encryption.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - Frame to encrypt (must not be ErrorFrame per spec)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Frame::EncryptedRecord` containing encrypted frame data.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if session not established or encryption fails.
+    pub fn encrypt_frame(&mut self, frame: &Frame) -> Result<Frame> {
+        // Ensure session is established
+        let keys = self
+            .keys
+            .as_mut()
+            .ok_or_else(|| Error::ProtocolViolation("Session not established".into()))?;
+
+        // Get selected cipher from state
+        let cipher = match &self.state {
+            SessionState::Established { cipher, .. } => *cipher,
+            _ => return Err(Error::InvalidState),
+        };
+
+        // Serialize frame
+        let plaintext = frame.serialize()?;
+
+        // Get current epoch and send_nonce
+        let epoch = keys.key_epoch as u8; // Truncate to u8 per spec
+        let counter = keys.send_nonce;
+
+        // Increment send_nonce for next frame
+        keys.send_nonce = keys
+            .send_nonce
+            .checked_add(1)
+            .ok_or_else(|| Error::ProtocolViolation("Send nonce overflow".into()))?;
+
+        // Calculate length per spec: 4 (length) + 1 (epoch) + 8 (counter) + plaintext.len() + 16 (tag)
+        let total_length = 4 + 1 + 8 + plaintext.len() + 16;
+        if total_length > 16_777_216 {
+            // MAX_RECORD_SIZE = 16 MB
+            return Err(Error::ProtocolViolation(format!(
+                "EncryptedRecord too large: {} bytes (max 16 MB)",
+                total_length
+            )));
+        }
+
+        // Construct AAD: length (4 bytes LE) || epoch (1 byte) || counter (8 bytes LE)
+        let mut aad = Vec::with_capacity(13);
+        aad.extend_from_slice(&(total_length as u32).to_le_bytes());
+        aad.push(epoch);
+        aad.extend_from_slice(&counter.to_le_bytes());
+
+        // Construct nonce per spec §6.5.1: [0,0,0,0] || counter (8 bytes LE)
+        let mut nonce = [0u8; 12];
+        nonce[4..12].copy_from_slice(&counter.to_le_bytes());
+
+        // Encrypt based on cipher suite
+        let (ciphertext, tag) = match cipher {
+            ZP_HYBRID_1 | ZP_HYBRID_2 => {
+                // ChaCha20-Poly1305
+                use chacha20poly1305::{
+                    aead::{Aead, KeyInit, Payload},
+                    ChaCha20Poly1305,
+                };
+
+                let cipher_obj =
+                    ChaCha20Poly1305::new_from_slice(&*keys.send_key).map_err(|e| {
+                        Error::ProtocolViolation(format!("ChaCha20 init failed: {}", e))
+                    })?;
+
+                let payload = Payload {
+                    msg: &plaintext,
+                    aad: &aad,
+                };
+
+                let ciphertext_with_tag = cipher_obj
+                    .encrypt(&nonce.into(), payload)
+                    .map_err(|e| Error::ProtocolViolation(format!("Encryption failed: {}", e)))?;
+
+                // Split ciphertext and tag (last 16 bytes)
+                if ciphertext_with_tag.len() < 16 {
+                    return Err(Error::ProtocolViolation(
+                        "Encrypted output too short".into(),
+                    ));
+                }
+                let split_point = ciphertext_with_tag.len() - 16;
+                let ct = ciphertext_with_tag[..split_point].to_vec();
+                let mut tag_arr = [0u8; 16];
+                tag_arr.copy_from_slice(&ciphertext_with_tag[split_point..]);
+                (ct, tag_arr)
+            }
+            ZP_HYBRID_3 | ZP_CLASSICAL_2 => {
+                // AES-256-GCM
+                use aes_gcm::{
+                    aead::{Aead, KeyInit, Payload},
+                    Aes256Gcm,
+                };
+
+                let cipher_obj = Aes256Gcm::new_from_slice(&*keys.send_key).map_err(|e| {
+                    Error::ProtocolViolation(format!("AES-256-GCM init failed: {}", e))
+                })?;
+
+                let payload = Payload {
+                    msg: &plaintext,
+                    aad: &aad,
+                };
+
+                let ciphertext_with_tag = cipher_obj
+                    .encrypt(&nonce.into(), payload)
+                    .map_err(|e| Error::ProtocolViolation(format!("Encryption failed: {}", e)))?;
+
+                // Split ciphertext and tag
+                if ciphertext_with_tag.len() < 16 {
+                    return Err(Error::ProtocolViolation(
+                        "Encrypted output too short".into(),
+                    ));
+                }
+                let split_point = ciphertext_with_tag.len() - 16;
+                let ct = ciphertext_with_tag[..split_point].to_vec();
+                let mut tag_arr = [0u8; 16];
+                tag_arr.copy_from_slice(&ciphertext_with_tag[split_point..]);
+                (ct, tag_arr)
+            }
+            _ => {
+                return Err(Error::ProtocolViolation(format!(
+                    "Unsupported cipher for EncryptedRecord: {}",
+                    cipher
+                )))
+            }
+        };
+
+        Ok(Frame::EncryptedRecord {
+            epoch,
+            counter,
+            ciphertext,
+            tag,
+        })
+    }
+
+    /// Decrypt an EncryptedRecord for non-QUIC transports per spec §3.3.13.
+    ///
+    /// # Arguments
+    ///
+    /// * `encrypted_record` - EncryptedRecord frame to decrypt
+    ///
+    /// # Returns
+    ///
+    /// Returns decrypted Frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if session not established, counter mismatch (replay attack),
+    /// or decryption fails.
+    pub fn decrypt_record(&mut self, encrypted_record: &Frame) -> Result<Frame> {
+        // Ensure session is established
+        let keys = self
+            .keys
+            .as_mut()
+            .ok_or_else(|| Error::ProtocolViolation("Session not established".into()))?;
+
+        // Get selected cipher from state
+        let cipher = match &self.state {
+            SessionState::Established { cipher, .. } => *cipher,
+            _ => return Err(Error::InvalidState),
+        };
+
+        // Extract EncryptedRecord fields
+        let (epoch, counter, ciphertext, tag) = match encrypted_record {
+            Frame::EncryptedRecord {
+                epoch,
+                counter,
+                ciphertext,
+                tag,
+            } => (*epoch, *counter, ciphertext, *tag),
+            _ => return Err(Error::InvalidFrame("Expected EncryptedRecord".into())),
+        };
+
+        // Verify counter matches expected recv_nonce (prevents replay attacks)
+        if counter != keys.recv_nonce {
+            return Err(Error::ProtocolViolation(format!(
+                "EncryptedRecord counter mismatch: got {}, expected {}",
+                counter, keys.recv_nonce
+            )));
+        }
+
+        // Verify epoch matches current epoch
+        if epoch != keys.key_epoch as u8 {
+            return Err(Error::ProtocolViolation(format!(
+                "EncryptedRecord epoch mismatch: got {}, expected {}",
+                epoch, keys.key_epoch
+            )));
+        }
+
+        // Calculate length
+        let total_length = 4 + 1 + 8 + ciphertext.len() + 16;
+
+        // Construct AAD: length (4 bytes LE) || epoch (1 byte) || counter (8 bytes LE)
+        let mut aad = Vec::with_capacity(13);
+        aad.extend_from_slice(&(total_length as u32).to_le_bytes());
+        aad.push(epoch);
+        aad.extend_from_slice(&counter.to_le_bytes());
+
+        // Construct nonce per spec §6.5.1: [0,0,0,0] || counter (8 bytes LE)
+        let mut nonce = [0u8; 12];
+        nonce[4..12].copy_from_slice(&counter.to_le_bytes());
+
+        // Reconstruct ciphertext_with_tag for AEAD libraries
+        let mut ciphertext_with_tag = ciphertext.clone();
+        ciphertext_with_tag.extend_from_slice(&tag);
+
+        // Decrypt based on cipher suite
+        let plaintext = match cipher {
+            ZP_HYBRID_1 | ZP_HYBRID_2 => {
+                // ChaCha20-Poly1305
+                use chacha20poly1305::{
+                    aead::{Aead, KeyInit, Payload},
+                    ChaCha20Poly1305,
+                };
+
+                let cipher_obj =
+                    ChaCha20Poly1305::new_from_slice(&*keys.recv_key).map_err(|e| {
+                        Error::ProtocolViolation(format!("ChaCha20 init failed: {}", e))
+                    })?;
+
+                let payload = Payload {
+                    msg: &ciphertext_with_tag,
+                    aad: &aad,
+                };
+
+                cipher_obj
+                    .decrypt(&nonce.into(), payload)
+                    .map_err(|e| Error::ProtocolViolation(format!("Decryption failed: {}", e)))?
+            }
+            ZP_HYBRID_3 | ZP_CLASSICAL_2 => {
+                // AES-256-GCM
+                use aes_gcm::{
+                    aead::{Aead, KeyInit, Payload},
+                    Aes256Gcm,
+                };
+
+                let cipher_obj = Aes256Gcm::new_from_slice(&*keys.recv_key).map_err(|e| {
+                    Error::ProtocolViolation(format!("AES-256-GCM init failed: {}", e))
+                })?;
+
+                let payload = Payload {
+                    msg: &ciphertext_with_tag,
+                    aad: &aad,
+                };
+
+                cipher_obj
+                    .decrypt(&nonce.into(), payload)
+                    .map_err(|e| Error::ProtocolViolation(format!("Decryption failed: {}", e)))?
+            }
+            _ => {
+                return Err(Error::ProtocolViolation(format!(
+                    "Unsupported cipher for EncryptedRecord: {}",
+                    cipher
+                )))
+            }
+        };
+
+        // Increment recv_nonce for next frame
+        keys.recv_nonce = keys
+            .recv_nonce
+            .checked_add(1)
+            .ok_or_else(|| Error::ProtocolViolation("Receive nonce overflow".into()))?;
+
+        // Parse decrypted plaintext as Frame
+        Frame::parse(&plaintext)
+    }
 }
 
 impl Default for Session {
@@ -2203,5 +2491,241 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_encrypted_record_roundtrip() {
+        // Establish a session
+        let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+        let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+        let ch = client.client_start_stranger().unwrap();
+        let sh = server.server_process_client_hello(ch).unwrap();
+        let cf = client.client_process_server_hello(sh).unwrap();
+        server.server_process_client_finish(cf).unwrap();
+
+        // Both established
+        assert!(client.is_established());
+        assert!(server.is_established());
+
+        // Create a test DataFrame
+        let test_frame = Frame::DataFrame {
+            stream_id: 42,
+            seq: 1,
+            flags: 0,
+            payload: vec![1, 2, 3, 4, 5],
+        };
+
+        // Client encrypts the frame
+        let encrypted = client.encrypt_frame(&test_frame).unwrap();
+
+        // Verify it's an EncryptedRecord
+        assert!(matches!(encrypted, Frame::EncryptedRecord { .. }));
+
+        // Verify send_nonce incremented
+        assert_eq!(client.keys().unwrap().send_nonce, 1);
+
+        // Server decrypts the frame
+        let decrypted = server.decrypt_record(&encrypted).unwrap();
+
+        // Verify recv_nonce incremented
+        assert_eq!(server.keys().unwrap().recv_nonce, 1);
+
+        // Verify decrypted frame matches original
+        match (test_frame, decrypted) {
+            (
+                Frame::DataFrame {
+                    stream_id: s1,
+                    seq: seq1,
+                    flags: f1,
+                    payload: p1,
+                },
+                Frame::DataFrame {
+                    stream_id: s2,
+                    seq: seq2,
+                    flags: f2,
+                    payload: p2,
+                },
+            ) => {
+                assert_eq!(s1, s2);
+                assert_eq!(seq1, seq2);
+                assert_eq!(f1, f2);
+                assert_eq!(p1, p2);
+            }
+            _ => panic!("Decrypted frame type mismatch"),
+        }
+    }
+
+    #[test]
+    fn test_encrypted_record_nonce_increment() {
+        // Establish session
+        let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+        let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+        let ch = client.client_start_stranger().unwrap();
+        let sh = server.server_process_client_hello(ch).unwrap();
+        let cf = client.client_process_server_hello(sh).unwrap();
+        server.server_process_client_finish(cf).unwrap();
+
+        // Send multiple frames and verify nonce increments
+        for i in 0..5u64 {
+            let frame = Frame::DataFrame {
+                stream_id: 1,
+                seq: i,
+                flags: 0,
+                payload: vec![i as u8],
+            };
+
+            assert_eq!(client.keys().unwrap().send_nonce, i);
+            let encrypted = client.encrypt_frame(&frame).unwrap();
+            assert_eq!(client.keys().unwrap().send_nonce, i + 1);
+
+            assert_eq!(server.keys().unwrap().recv_nonce, i);
+            let _decrypted = server.decrypt_record(&encrypted).unwrap();
+            assert_eq!(server.keys().unwrap().recv_nonce, i + 1);
+        }
+
+        // Verify final nonce values
+        assert_eq!(client.keys().unwrap().send_nonce, 5);
+        assert_eq!(server.keys().unwrap().recv_nonce, 5);
+    }
+
+    #[test]
+    fn test_encrypted_record_replay_protection() {
+        // Establish session
+        let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+        let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+        let ch = client.client_start_stranger().unwrap();
+        let sh = server.server_process_client_hello(ch).unwrap();
+        let cf = client.client_process_server_hello(sh).unwrap();
+        server.server_process_client_finish(cf).unwrap();
+
+        // Encrypt a frame
+        let frame = Frame::DataFrame {
+            stream_id: 1,
+            seq: 0,
+            flags: 0,
+            payload: vec![1, 2, 3],
+        };
+        let encrypted = client.encrypt_frame(&frame).unwrap();
+
+        // First decryption should succeed
+        let _decrypted = server.decrypt_record(&encrypted).unwrap();
+
+        // Replay the same encrypted frame - should fail (nonce mismatch)
+        let result = server.decrypt_record(&encrypted);
+        assert!(
+            result.is_err(),
+            "Replay attack should be detected (nonce mismatch)"
+        );
+    }
+
+    #[test]
+    fn test_encrypted_record_wrong_epoch() {
+        // Establish session
+        let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+        let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+        let ch = client.client_start_stranger().unwrap();
+        let sh = server.server_process_client_hello(ch).unwrap();
+        let cf = client.client_process_server_hello(sh).unwrap();
+        server.server_process_client_finish(cf).unwrap();
+
+        // Encrypt a frame
+        let frame = Frame::DataFrame {
+            stream_id: 1,
+            seq: 0,
+            flags: 0,
+            payload: vec![1, 2, 3],
+        };
+        let mut encrypted = client.encrypt_frame(&frame).unwrap();
+
+        // Tamper with epoch
+        if let Frame::EncryptedRecord {
+            ref mut epoch,
+            counter: _,
+            ciphertext: _,
+            tag: _,
+        } = encrypted
+        {
+            *epoch = 99; // Wrong epoch
+        }
+
+        // Decryption should fail due to epoch mismatch
+        let result = server.decrypt_record(&encrypted);
+        assert!(
+            result.is_err(),
+            "Should reject EncryptedRecord with wrong epoch"
+        );
+    }
+
+    #[test]
+    fn test_encrypted_record_before_established() {
+        // Try to encrypt before session is established
+        let mut session = Session::new(Role::Client, HandshakeMode::Stranger);
+
+        let frame = Frame::DataFrame {
+            stream_id: 1,
+            seq: 0,
+            flags: 0,
+            payload: vec![1, 2, 3],
+        };
+
+        let result = session.encrypt_frame(&frame);
+        assert!(
+            result.is_err(),
+            "Should fail to encrypt before session established"
+        );
+    }
+
+    #[test]
+    fn test_encrypted_record_bidirectional() {
+        // Establish session
+        let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+        let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+        let ch = client.client_start_stranger().unwrap();
+        let sh = server.server_process_client_hello(ch).unwrap();
+        let cf = client.client_process_server_hello(sh).unwrap();
+        server.server_process_client_finish(cf).unwrap();
+
+        // Client sends to server
+        let client_frame = Frame::DataFrame {
+            stream_id: 1,
+            seq: 0,
+            flags: 0,
+            payload: vec![1, 2, 3],
+        };
+        let encrypted_c2s = client.encrypt_frame(&client_frame).unwrap();
+        let decrypted_c2s = server.decrypt_record(&encrypted_c2s).unwrap();
+
+        // Verify decrypted matches
+        match decrypted_c2s {
+            Frame::DataFrame { payload, .. } => assert_eq!(payload, vec![1, 2, 3]),
+            _ => panic!("Expected DataFrame"),
+        }
+
+        // Server sends to client
+        let server_frame = Frame::DataFrame {
+            stream_id: 2,
+            seq: 0,
+            flags: 0,
+            payload: vec![4, 5, 6],
+        };
+        let encrypted_s2c = server.encrypt_frame(&server_frame).unwrap();
+        let decrypted_s2c = client.decrypt_record(&encrypted_s2c).unwrap();
+
+        // Verify decrypted matches
+        match decrypted_s2c {
+            Frame::DataFrame { payload, .. } => assert_eq!(payload, vec![4, 5, 6]),
+            _ => panic!("Expected DataFrame"),
+        }
+
+        // Verify independent nonce counters
+        assert_eq!(client.keys().unwrap().send_nonce, 1); // Client sent 1 frame
+        assert_eq!(client.keys().unwrap().recv_nonce, 1); // Client received 1 frame
+        assert_eq!(server.keys().unwrap().send_nonce, 1); // Server sent 1 frame
+        assert_eq!(server.keys().unwrap().recv_nonce, 1); // Server received 1 frame
     }
 }
