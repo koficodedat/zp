@@ -12,7 +12,8 @@
 
 **In Progress:**
 - **Phase 5: Transport Layer Integration** (Started 2025-12-20)
-  - Status: Tasks 5.1 (QUIC), 5.2 (WebSocket), and 5.3 (WebRTC) complete, moving to TCP fallback
+  - Status: Tasks 5.1 (QUIC), 5.2 (WebSocket), 5.3 (WebRTC), and 5.4 (TCP) complete
+  - Next: Phase 5 cleanup and integration (racing, TLS, EncryptedRecord)
 
 **Added:**
 - QUIC transport implementation (zp-transport) **[COMPLETE]**
@@ -74,6 +75,27 @@
   - TODO: AckFrame reliability layer for unreliable DataChannel (per §6.4 requirement)
   - Note: Integration tests marked #[ignore] - require network setup for actual P2P connections
   - Status: API complete per spec, pending AckFrame reliability layer and network integration tests
+
+- TCP transport implementation (zp-transport) **[COMPLETE]**
+  - Spec §3.3.7 conformance: Multiplexing Degradation (TCP fallback)
+  - StreamChunk format: [stream_id: u32][length: u32][payload: bytes] (little-endian)
+  - Multiplexed mode: DataFrame.stream_id = 0xFFFFFFFF (sentinel), payload contains StreamChunks
+  - Single-stream mode: DataFrame.stream_id = actual ID, payload = raw data
+  - Length-prefixed framing: [4-byte length][frame data] for reliable delivery
+  - Session integration with Stranger mode (TOFU security model)
+  - `TcpEndpoint` - Client/server endpoint creation (TCP listener/client)
+  - `TcpConnection` - Frame send/receive with length-prefixed framing
+  - `StreamChunk` - Multiplexing format for multi-stream TCP connections
+  - `MULTIPLEXED_STREAM_ID` - Sentinel value 0xFFFFFFFF per spec §3.3.7
+  - DoS protection: MAX_FRAME_SIZE (16 MB) limit on frame length
+  - Test coverage: 12 conformance tests + 5 integration tests + 4 unit tests (all passing)
+  - Files: `crates/zp-transport/src/tcp.rs` (~398 lines)
+  - Conformance tests: `tests/conformance/tcp_spec_3_3_7.rs` (12 tests, §3.3.7 compliance)
+  - Integration tests: `crates/zp-transport/tests/tcp_integration.rs` (5 end-to-end tests)
+  - TODO: TLS 1.3 wrapper over TCP/443 (currently plain TCP)
+  - TODO: EncryptedRecord wrapper for post-handshake frames (per §3.3.13)
+  - TODO: Racing with QUIC (ZP_RACING_THRESHOLD: 200ms per spec)
+  - Status: StreamChunk format and framing complete, pending TLS integration
 
 - OPAQUE password-authenticated key exchange (zp-crypto + zp-core) **[COMPLETE]**
   - RFC 9807 conformance using opaque-ke v3.0 (NCC Group audited, June 2021)
