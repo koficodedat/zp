@@ -1,0 +1,25 @@
+# Docker Compose for WebRTC cross-container testing
+#
+# Usage:
+#   1. Build: docker-compose build
+#   2. Run: SIGNALING_URL=http://host.docker.internal:PORT SESSION_ID=xyz docker-compose up
+#
+# The signaling server runs on the host (embedded in test).
+# The server peer runs in container (different IP from host).
+
+services:
+  webrtc-server-peer:
+    build:
+      context: ../../../../  # Build from repo root
+      dockerfile: crates/zp-transport/tests/signaling/Dockerfile
+    environment:
+      - SIGNALING_URL=${SIGNALING_URL}
+      - SESSION_ID=${SESSION_ID}
+      - PEER_ROLE=server
+      - STUN_SERVER=${STUN_SERVER:-stun:stun.l.google.com:19302}
+    # Use host networking to eliminate Docker bridge network isolation
+    # This allows container to access STUN servers and exchange ICE candidates properly
+    # See: https://github.com/screego/server/issues/56
+    network_mode: host
+    # Note: network_mode: host is incompatible with custom networks
+    # Container shares host's network stack, so no need for bridge network

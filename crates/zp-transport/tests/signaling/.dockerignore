@@ -1,0 +1,26 @@
+# Exclude Rust build artifacts to speed up Docker builds
+# This reduces context transfer from ~15GB to ~170MB
+target/
+
+# Exclude other build artifacts
+**/*.rs.bk
+**/*.pdb
+
+# Exclude Git files
+.git/
+.gitignore
+
+# Exclude IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Exclude test artifacts
+*.log
+*.profraw
+*.profdata
+
+# Exclude macOS files
+.DS_Store

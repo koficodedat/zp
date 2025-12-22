@@ -88,8 +88,6 @@ async fn test_tcp_encrypted_record_roundtrip() -> Result<()> {
 
     // Spawn server task
     let server_handle = tokio::spawn(async move {
-        
-
         // Client will complete handshake
         // Server receives handshake frames and completes
         // (Handshake logic handled in test below)
@@ -193,7 +191,6 @@ async fn test_tcp_encrypted_record_bidirectional() -> Result<()> {
 
     // Spawn server task
     let server_handle = tokio::spawn(async move {
-        
         server_endpoint
             .accept()
             .await
@@ -331,7 +328,6 @@ async fn test_tcp_encrypted_record_multiple_frames() -> Result<()> {
 
     // Spawn server task
     let server_handle = tokio::spawn(async move {
-        
         server_endpoint
             .accept()
             .await
@@ -429,7 +425,6 @@ async fn test_websocket_encrypted_record_roundtrip() -> Result<()> {
 
     // Spawn server task
     let server_handle = tokio::spawn(async move {
-        
         server_endpoint
             .accept()
             .await

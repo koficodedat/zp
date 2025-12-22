@@ -173,7 +173,14 @@ impl WebRtcEndpoint {
             Box::pin(async move {
                 if let Some(candidate) = candidate {
                     let init = candidate.to_json().unwrap_or_default();
+                    eprintln!(
+                        "[WEBRTC] 🔵 Local ICE candidate gathered: {:?}",
+                        init.candidate
+                    );
+                    eprintln!("[WEBRTC] 📤 Sending ICE candidate to signaling channel");
                     let _ = tx.send(SignalingMessage::IceCandidate(init)).await;
+                } else {
+                    eprintln!("[WEBRTC] ✅ ICE gathering complete (null candidate)");
                 }
             })
         }));
@@ -255,21 +262,38 @@ impl WebRtcEndpoint {
             return Err(Error::ConnectionFailed("Expected SDP answer".into()));
         }
 
-        // Receive and apply remote ICE candidates
+        // CRITICAL FIX: Only receive and add ICE candidates AFTER setRemoteDescription
+        // This prevents "pingAllCandidates with no candidate pairs" error
+        // See: https://github.com/w3c/webrtc-pc/issues/2519
         tokio::spawn({
             let pc = Arc::clone(&peer_connection);
             let sig = signaling.clone();
             async move {
+                eprintln!("[WEBRTC CLIENT] 🎧 Starting ICE candidate receive loop...");
                 while let Ok(msg) = sig.recv().await {
                     if let SignalingMessage::IceCandidate(candidate) = msg {
-                        let _ = pc.add_ice_candidate(candidate).await;
+                        eprintln!(
+                            "[WEBRTC CLIENT] 📥 Received remote ICE candidate: {:?}",
+                            candidate.candidate
+                        );
+                        match pc.add_ice_candidate(candidate).await {
+                            Ok(_) => eprintln!("[WEBRTC CLIENT] ✅ Added remote ICE candidate"),
+                            Err(e) => {
+                                eprintln!("[WEBRTC CLIENT] ❌ Failed to add ICE candidate: {}", e)
+                            }
+                        }
                     }
                 }
+                eprintln!("[WEBRTC CLIENT] 🛑 ICE candidate receive loop ended");
             }
         });
 
         // Wait for connection
         Self::wait_for_connection(&peer_connection).await?;
+
+        // CRITICAL: Wait for DataChannel to be open before returning
+        // The PeerConnection being "connected" doesn't guarantee DataChannel is ready
+        Self::wait_for_datachannel_open(&data_channel).await?;
 
         // Create session (Stranger mode, TOFU) - Client role
         let session = Arc::new(RwLock::new(Session::new(
@@ -346,7 +370,7 @@ impl WebRtcEndpoint {
             .await
             .map_err(|e| Error::ConnectionFailed(format!("Signaling failed: {}", e)))?;
 
-        // Exchange ICE candidates
+        // Send local ICE candidates as they're gathered
         tokio::spawn({
             let sig = signaling.clone();
             async move {
@@ -356,16 +380,30 @@ impl WebRtcEndpoint {
             }
         });
 
-        // Receive and apply remote ICE candidates
+        // CRITICAL: Receive remote ICE candidates (after setRemoteDescription was called at line 321)
+        // This ensures addIceCandidate() only happens after remote description is set
+        // Prevents "pingAllCandidates with no candidate pairs" error
+        // See: https://github.com/w3c/webrtc-pc/issues/2519
         tokio::spawn({
             let pc = Arc::clone(&peer_connection);
             let sig = signaling.clone();
             async move {
+                eprintln!("[WEBRTC SERVER] 🎧 Starting ICE candidate receive loop...");
                 while let Ok(msg) = sig.recv().await {
                     if let SignalingMessage::IceCandidate(candidate) = msg {
-                        let _ = pc.add_ice_candidate(candidate).await;
+                        eprintln!(
+                            "[WEBRTC SERVER] 📥 Received remote ICE candidate: {:?}",
+                            candidate.candidate
+                        );
+                        match pc.add_ice_candidate(candidate).await {
+                            Ok(_) => eprintln!("[WEBRTC SERVER] ✅ Added remote ICE candidate"),
+                            Err(e) => {
+                                eprintln!("[WEBRTC SERVER] ❌ Failed to add ICE candidate: {}", e)
+                            }
+                        }
                     }
                 }
+                eprintln!("[WEBRTC SERVER] 🛑 ICE candidate receive loop ended");
             }
         });
 
@@ -377,6 +415,10 @@ impl WebRtcEndpoint {
 
         // Wait for connection
         Self::wait_for_connection(&peer_connection).await?;
+
+        // CRITICAL: Wait for DataChannel to be open before returning
+        // The PeerConnection being "connected" doesn't guarantee DataChannel is ready
+        Self::wait_for_datachannel_open(&data_channel).await?;
 
         // Create session (Stranger mode, TOFU) - Server role
         let session = Arc::new(RwLock::new(Session::new(
@@ -415,6 +457,47 @@ impl WebRtcEndpoint {
         }
 
         Err(Error::ConnectionFailed("Connection timeout".into()))
+    }
+
+    /// Wait for DataChannel to be open and ready for sending
+    async fn wait_for_datachannel_open(data_channel: &Arc<RTCDataChannel>) -> Result<()> {
+        use webrtc::data_channel::data_channel_state::RTCDataChannelState;
+
+        let (tx, mut rx) = mpsc::channel(1);
+
+        // Check if already open
+        if data_channel.ready_state() == RTCDataChannelState::Open {
+            eprintln!("[WEBRTC] ✅ DataChannel already open");
+            return Ok(());
+        }
+
+        eprintln!(
+            "[WEBRTC] ⏳ Waiting for DataChannel to open (current state: {:?})...",
+            data_channel.ready_state()
+        );
+
+        // Set up on_open callback
+        data_channel.on_open(Box::new(move || {
+            let tx = tx.clone();
+            Box::pin(async move {
+                eprintln!("[WEBRTC] 🎉 DataChannel opened!");
+                let _ = tx.send(()).await;
+            })
+        }));
+
+        // Wait for open event with timeout
+        tokio::select! {
+            _ = rx.recv() => {
+                eprintln!("[WEBRTC] ✅ DataChannel is now open and ready");
+                Ok(())
+            }
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                Err(Error::ConnectionFailed(format!(
+                    "DataChannel open timeout (stuck in state: {:?})",
+                    data_channel.ready_state()
+                )))
+            }
+        }
     }
 }
 
