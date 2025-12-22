@@ -13,11 +13,11 @@
 **In Progress:**
 - **Phase 5B: Full Hardening** (Started 2025-12-22)
   - Status: Phase 5A complete (error paths 60%, total 70%), Phase 5B in progress
-  - Edge case testing: 10/12 tests implemented (83% complete, 2 blocked on spec)
+  - Edge case testing: 10/12 tests implemented (83% complete, 2 deferred to Phase 4)
     - ✅ Frame Size Boundaries: 3/3 tests (max size, oversized, empty payload)
     - ✅ Counter Overflow: 3/3 tests (send_nonce, recv_nonce, key_epoch at u64/u32::MAX)
     - ✅ Flow Control: 3/3 tests (window=0, overflow, receive violation in zp-core unit tests)
-    - 🟡 Stream Limits: 1/3 tests (rapid creation ✅, 2 blocked: max concurrent needs spec limit, ID exhaustion needs test API)
+    - 🟡 Stream Limits: 1/3 tests (rapid creation ✅, hibernation overflow deferred to Phase 4 State Token, ID exhaustion needs test API)
   - Concurrency testing: 0/10 tests (requires integration-level infrastructure)
     - ⏳ Concurrent Stream Operations: 0/4 tests
     - ⏳ Encryption Concurrency: 0/3 tests

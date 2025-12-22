@@ -301,15 +301,15 @@ async fn test_key_epoch_overflow() {
 //    - Validates stream ID parity and uniqueness
 //    - Status: PASSING (opens 100 streams in ~50ms due to Quinn limit)
 //
-// ❌ Test 4.1: Maximum concurrent streams (ZP_MAX_CONCURRENT_STREAMS enforcement)
-//    BLOCKED: No spec-defined limit exists
-//    - Spec §1.4 says "not optimized for 100+ streams" (soft guidance only)
-//    - Quinn enforces 100 at transport layer (crates/zp-transport/src/quic/mod.rs:88,139)
-//    - No ZP protocol-layer limit defined in spec or implementation
-//    - Requires DA decision: Should ZP enforce application-layer stream limit?
-//      Options: (1) No limit - rely on Quinn, (2) Define ZP limit = 100, (3) Higher limit
-//    - Cannot implement until ZP_MAX_CONCURRENT_STREAMS constant is defined
-//    - Deferred to Phase 6 or requires /escalate for DA ruling
+// ❌ Test 4.1: Hibernation stream overflow (>12 streams triggers LRU eviction)
+//    DEFERRED: State Token not implemented (Phase 4 - Task 4.3)
+//    - Spec §6.6: "Max 12 streams" in State Token hibernation storage
+//    - Spec §1.4: "not optimized for 100+ streams" (soft guidance, not hard limit)
+//    - Quinn enforces 100 at transport layer (already tested by Test 4.3)
+//    - ZP protocol has hibernation limit (12) with overflow policies (REJECT/LRU/PRIORITY)
+//    - Test would verify: Open >12 streams, trigger hibernation, verify LRU eviction per §6.6
+//    - Cannot test until State Token persistence implemented (Phase 4 NEXT_TASKS line 692)
+//    - No spec ambiguity - just timing dependency on Phase 4 completion
 //
 // ❌ Test 4.2: Stream ID exhaustion (approach u32::MAX stream IDs)
 //    BLOCKED: Need test accessor for stream ID fast-forward
