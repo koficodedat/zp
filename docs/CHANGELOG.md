@@ -11,6 +11,25 @@
 ### Unreleased
 
 **In Progress:**
+- **Task 4.3: Transport Migration + State Token** (Started 2025-12-22)
+  - Phase 1 complete: ZP Stranger Mode handshake execution in QuicConnection
+    - Added `QuicConnection::perform_handshake()` for client/server handshake flows
+    - Skips WindowUpdate frames during handshake for proper frame ordering
+    - Verifies session establishment and key derivation per spec §4.2
+    - Integration test added (currently #[ignore] pending WindowUpdate timing refinement)
+    - Documented encryption concurrency tests require TCP transport (QUIC uses native TLS 1.3)
+  - Phase 2 complete: State Token Foundation (spec §6.5)
+    - Created `zp-core/src/token.rs` with StateToken data structures
+    - Implemented serialization/deserialization for all token components:
+      - TokenHeader (16 bytes) - magic, version, stream_count, created_at
+      - CryptoContext (136 bytes) - session keys, nonces, key_epoch
+      - ConnectionContext (50 bytes) - connection_id, peer_address, RTT, congestion window
+      - StreamState (63 bytes) - stream_id, offsets, flow_window, state_flags, priority
+    - Extended Stream struct with send_offset/recv_offset fields per spec §6.5
+    - 13 unit tests covering serialization, validation, and spec constraints (all passing)
+    - Maximum hibernation: 12 streams (958 bytes total per spec)
+  - Status: Foundation complete, pending encryption and persistence (Phase 3+4)
+
 - **Phase 5B: Full Hardening** (Started 2025-12-22)
   - Status: Phase 5A complete (error paths 60%, total 70%), Phase 5B in progress
   - Edge case testing: 10/12 tests implemented (83% complete, 2 deferred to Phase 4)

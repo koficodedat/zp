@@ -664,17 +664,36 @@ Implemented complete key rotation protocol per spec §4.6. Sessions can now rota
 
 ---
 
-### Task 4.3: Transport Migration (Sync-Frame Integration)
+### Task 4.3: Transport Migration + State Token
 **Priority:** P1 (mobile clients require seamless network transitions)
-**File:** `crates/zp-core/src/session.rs`, `crates/zp-core/src/stream.rs`
-**Status:** 🔲 Planned
-**Spec Reference:** §3.3.3-6 (Sync-Frame, Sync-Ack)
-**Effort Estimate:** LARGE (32-48 hours)
+**File:** `crates/zp-core/src/session.rs`, `crates/zp-core/src/stream.rs`, `crates/zp-core/src/token.rs`, `crates/zp-transport/src/quic/mod.rs`
+**Status:** 🟡 In Progress (Phase 1+2 Complete, ~22-38 hours remaining)
+**Spec Reference:** §3.3.3-6 (Sync-Frame, Sync-Ack), §6.5 (State Token), §4.2 (Handshake)
+**Effort Estimate:** LARGE (32-48 hours, 10 hours invested)
+
+**Progress Summary:**
+- **Phase 1 Complete**: QuicConnection handshake execution (spec §4.2)
+  - Added `perform_handshake()` for Stranger Mode client/server flows
+  - Frame validation and session establishment verification
+  - Integration test added (pending WindowUpdate timing refinement)
+- **Phase 2 Complete**: State Token Foundation (spec §6.5)
+  - `zp-core/src/token.rs` created (~830 lines, 13 tests passing)
+  - Serialization/deserialization for all token components
+  - Stream struct extended with send_offset/recv_offset fields
+  - Max 12 streams, 958 bytes total per spec
 
 **Current Gap:**
-Sync-Frame and Sync-Ack frame types are defined, but migration logic is not integrated. Sessions cannot survive IP address changes or transport protocol switches.
+Sync-Frame migration logic not integrated. State Token encryption and persistence not implemented. Sessions cannot yet survive IP address changes or transport protocol switches.
 
 **Acceptance criteria:**
+- [x] **Phase 1**: QuicConnection handshake execution (spec §4.2) - **COMPLETE**
+  - QuicConnection::perform_handshake() for Stranger Mode
+  - Client/server flows with WindowUpdate frame skipping
+  - Session establishment and key derivation verification
+- [x] **Phase 2**: State Token Foundation (spec §6.5) - **COMPLETE**
+  - StateToken struct with all components (Header, Crypto, Connection, Stream States)
+  - Serialization/deserialization with spec validation
+  - Stream send_offset/recv_offset fields
 - [ ] Session::generate_sync_frame() - Serialize all stream states with XXH64 integrity
 - [ ] Session::process_sync_frame() - Validate and apply stream states from peer
 - [ ] Session::send_sync_ack() - Confirm migration with Sync-Ack
@@ -689,9 +708,11 @@ Sync-Frame and Sync-Ack frame types are defined, but migration logic is not inte
   - IP address change detection
   - Network interface switch (Wi-Fi ↔ Cellular)
   - QUIC connection migration (spec §3.4)
-- [ ] State Token generation and persistence (spec §6.5)
-  - Encrypted state blob for resumption after network loss
-  - Token expiration (TokenExpired error code 0x04)
+- [ ] State Token encryption with device-bound keys (spec §6.6)
+  - iOS: Secure Enclave integration
+  - Android: Hardware KeyStore integration
+- [ ] State Token persistence with TTL (24 hours per spec)
+  - TokenExpired error code 0x04
 - [ ] Conformance tests for Sync-Frame/Sync-Ack roundtrip
 - [ ] Integration tests with transport layer (QUIC, WebSocket, WebRTC)
 
