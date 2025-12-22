@@ -264,8 +264,7 @@ impl QuicConnection {
 
         let mut control_stream = QuicStream::new(0, send, recv, true);
 
-        // Send initial WindowUpdate per spec §3.4
-        // WindowUpdate(stream_id=0, increment=ZP_INITIAL_CONN_WINDOW)
+        // Send initial WindowUpdate per spec §3.4 (for backward compat with non-handshake tests)
         let window_update = Frame::WindowUpdate {
             stream_id: 0,
             window_increment: ZP_INITIAL_CONN_WINDOW as u64,
@@ -293,7 +292,7 @@ impl QuicConnection {
 
         let mut control_stream = QuicStream::new(0, send, recv, true);
 
-        // Send initial WindowUpdate per spec §3.4
+        // Send initial WindowUpdate per spec §3.4 (for backward compat with non-handshake tests)
         let window_update = Frame::WindowUpdate {
             stream_id: 0,
             window_increment: ZP_INITIAL_CONN_WINDOW as u64,
@@ -365,6 +364,124 @@ impl QuicConnection {
     /// Close the connection.
     pub fn close(&self, error_code: u32, reason: &[u8]) {
         self.connection.close(VarInt::from_u32(error_code), reason);
+    }
+
+    /// Perform ZP handshake over control stream.
+    ///
+    /// Executes Stranger Mode handshake (Trust On First Use):
+    /// - Client: Send ClientHello → Receive ServerHello → Send ClientFinish
+    /// - Server: Receive ClientHello → Send ServerHello → Receive ClientFinish
+    ///
+    /// After successful handshake, session keys are derived and session is established.
+    ///
+    /// Spec: §4.2 (Stranger Mode Handshake)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if handshake fails or frames are invalid.
+    pub async fn perform_handshake(&self) -> Result<()> {
+        let mut session = self.session.write().await;
+        let mut control_stream_opt = self.control_stream.write().await;
+        let control_stream = control_stream_opt
+            .as_mut()
+            .ok_or_else(|| Error::ConnectionFailed("Control stream not initialized".into()))?;
+
+        let role = session.role();
+
+        match role {
+            Role::Client => {
+                // Client flow: ClientHello → ServerHello (skip WindowUpdate) → ClientFinish
+                // Note: WindowUpdate already sent in from_client()
+
+                // 1. Generate and send ClientHello
+                let client_hello = session
+                    .client_start_stranger()
+                    .map_err(Error::Protocol)?;
+                control_stream.send_frame(&client_hello).await?;
+
+                // 2. Receive frames (skip WindowUpdate, expect ServerHello)
+                let server_hello = loop {
+                    let frame = control_stream.recv_frame().await?.ok_or_else(|| {
+                        Error::ConnectionFailed("Connection closed during handshake".into())
+                    })?;
+
+                    match frame {
+                        Frame::WindowUpdate { .. } => continue, // Skip server's WindowUpdate
+                        Frame::ServerHello { .. } => break frame,
+                        other => {
+                            return Err(Error::Protocol(zp_core::Error::ProtocolViolation(
+                                format!("Expected ServerHello, got {:?}", other),
+                            )));
+                        }
+                    }
+                };
+
+                // 3. Process ServerHello and send ClientFinish
+                let client_finish = session
+                    .client_process_server_hello(server_hello)
+                    .map_err(Error::Protocol)?;
+                control_stream.send_frame(&client_finish).await?;
+
+                // Session should now be established
+                if !session.is_established() {
+                    return Err(Error::Protocol(zp_core::Error::InvalidState));
+                }
+
+                Ok(())
+            }
+            Role::Server => {
+                // Server flow: ClientHello (skip WindowUpdate) → ServerHello → ClientFinish
+                // Note: WindowUpdate already sent in from_server()
+
+                // 1. Receive frames (skip WindowUpdate, expect ClientHello)
+                let client_hello = loop {
+                    let frame = control_stream.recv_frame().await?.ok_or_else(|| {
+                        Error::ConnectionFailed("Connection closed during handshake".into())
+                    })?;
+
+                    match frame {
+                        Frame::WindowUpdate { .. } => continue, // Skip client's WindowUpdate
+                        Frame::ClientHello { .. } => break frame,
+                        other => {
+                            return Err(Error::Protocol(zp_core::Error::ProtocolViolation(
+                                format!("Expected ClientHello, got {:?}", other),
+                            )));
+                        }
+                    }
+                };
+
+                // 2. Process ClientHello and send ServerHello
+                let server_hello = session
+                    .server_process_client_hello(client_hello)
+                    .map_err(Error::Protocol)?;
+                control_stream.send_frame(&server_hello).await?;
+
+                // 3. Receive ClientFinish
+                let client_finish = control_stream.recv_frame().await?.ok_or_else(|| {
+                    Error::ConnectionFailed("Connection closed during handshake".into())
+                })?;
+
+                // Verify ClientFinish frame type
+                if !matches!(client_finish, Frame::ClientFinish { .. }) {
+                    return Err(Error::Protocol(zp_core::Error::ProtocolViolation(format!(
+                        "Expected ClientFinish, got {:?}",
+                        client_finish
+                    ))));
+                }
+
+                // 4. Process ClientFinish
+                session
+                    .server_process_client_finish(client_finish)
+                    .map_err(Error::Protocol)?;
+
+                // Session should now be established
+                if !session.is_established() {
+                    return Err(Error::Protocol(zp_core::Error::InvalidState));
+                }
+
+                Ok(())
+            }
+        }
     }
 }
 

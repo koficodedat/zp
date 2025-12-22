@@ -424,9 +424,11 @@ async fn test_stream_close_race() {
 ///
 /// Spec §6.5.1: Nonce counter must increment atomically to prevent reuse
 ///
-/// NOTE: Requires session handshake integration (Task 4.3 - Transport Migration)
+/// NOTE: Test deferred - QUIC uses native TLS 1.3 encryption (no EncryptedRecord)
+/// ZP session encryption only applies to non-QUIC transports (TCP, WebSocket, WebRTC).
+/// This test requires TCP transport implementation to verify EncryptedRecord nonce handling.
 #[tokio::test]
-#[ignore] // TODO: Integrate handshake with QuicConnection before testing encryption
+#[ignore] // TODO: Implement TCP transport for EncryptedRecord encryption testing
 async fn test_parallel_frame_encryption() {
     setup();
 
@@ -437,18 +439,26 @@ async fn test_parallel_frame_encryption() {
 
     let addr = server.local_addr().expect("Failed to get server address");
 
-    // Server accepts connection
+    // Server accepts connection and performs handshake
     let server_task = tokio::spawn(async move {
-        let _server_conn = server.accept().await.expect("Server accept failed");
-        // Just accept, don't process frames
+        let server_conn = server.accept().await.expect("Server accept failed");
+        server_conn
+            .perform_handshake()
+            .await
+            .expect("Server handshake failed");
     });
 
-    // Client connects
+    // Client connects and performs handshake
     let client = QuicEndpoint::client().expect("Client creation failed");
     let client_conn = client
         .connect(&addr.to_string(), "localhost")
         .await
         .expect("Client connection failed");
+
+    client_conn
+        .perform_handshake()
+        .await
+        .expect("Client handshake failed");
 
     // Get session for nonce tracking
     let session = client_conn.session();
@@ -507,9 +517,11 @@ async fn test_parallel_frame_encryption() {
 ///
 /// Spec §6.5.1: "Counter Increment: After encrypting each message, increment the counter by 1"
 ///
-/// NOTE: Requires session handshake integration (Task 4.3 - Transport Migration)
+/// NOTE: Test deferred - QUIC uses native TLS 1.3 encryption (no EncryptedRecord)
+/// ZP session encryption only applies to non-QUIC transports (TCP, WebSocket, WebRTC).
+/// This test requires TCP transport implementation to verify EncryptedRecord nonce atomicity.
 #[tokio::test]
-#[ignore] // TODO: Integrate handshake with QuicConnection before testing encryption
+#[ignore] // TODO: Implement TCP transport for EncryptedRecord encryption testing
 async fn test_nonce_counter_atomic_increment() {
     setup();
 
@@ -520,17 +532,26 @@ async fn test_nonce_counter_atomic_increment() {
 
     let addr = server.local_addr().expect("Failed to get server address");
 
-    // Server accepts connection
+    // Server accepts connection and performs handshake
     let server_task = tokio::spawn(async move {
-        let _server_conn = server.accept().await.expect("Server accept failed");
+        let server_conn = server.accept().await.expect("Server accept failed");
+        server_conn
+            .perform_handshake()
+            .await
+            .expect("Server handshake failed");
     });
 
-    // Client connects
+    // Client connects and performs handshake
     let client = QuicEndpoint::client().expect("Client creation failed");
     let client_conn = client
         .connect(&addr.to_string(), "localhost")
         .await
         .expect("Client connection failed");
+
+    client_conn
+        .perform_handshake()
+        .await
+        .expect("Client handshake failed");
 
     // Open stream
     let mut stream = client_conn.open_stream().await.expect("Stream open failed");
