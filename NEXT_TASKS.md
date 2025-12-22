@@ -1424,42 +1424,70 @@ Built Docker E2E testing infrastructure to bypass WebRTC ICE localhost limitatio
 
 ## Phase 5B: Full Hardening (REQUIRED BEFORE SCALE)
 
-**Status:** 🔲 Planned (Starts after Phase 5A)
+**Status:** 🟡 In Progress (Started 2025-12-22)
 **Goal:** Eliminate edge case bugs, verify concurrency
 **Coverage Target:** 70% → **80-85%**
-**Duration:** 2-3 days (16-20 hours)
+**Current Progress:** 3/22 tests implemented (13.6% complete)
+**Remaining Effort:** 14-18 hours
 **Risk Reduction:** Low → Very Low
 
-### Task 5B.1: Edge Case Testing ✅ PLANNED
+### Task 5B.1: Edge Case Testing 🟡 IN PROGRESS
 **Priority:** P1 (DoS vulnerabilities, counter overflow)
 **Files:** `crates/zp-transport/tests/edge_case_tests.rs`
-**Status:** 🔲 Planned
+**Status:** 🟡 3/12 tests complete (25%)
 **Spec Reference:** §3.3.10 (DataFrame), §6.5.1 (Nonce Construction)
 **Current Coverage:** ~40% edge cases
 **Target Coverage:** 80% edge cases
-**Estimated Effort:** SMALL (6-8 hours)
+**Remaining Effort:** 6-8 hours
 
 **Acceptance Criteria:**
 
-**1. Frame Size Boundaries** (3 tests, ~2 hours)
-- [x] 16 MB frame (MAX_FRAME_SIZE, should accept)
-- [x] 16 MB + 1 byte frame (should reject with ERR_FRAME_TOO_LARGE)
-- [x] Empty payload frames (0-byte DataFrame)
+**1. Frame Size Boundaries** (3 tests, ~2 hours) ✅ COMPLETE
+- [x] 16 MB frame (MAX_FRAME_SIZE, should accept) - `test_max_frame_size`
+- [x] 16 MB + 1 byte frame (should reject) - `test_oversized_frame_rejected`
+- [x] Empty payload frames (0-byte DataFrame) - `test_empty_payload_frame`
 
-**2. Counter Overflow Handling** (3 tests, ~2 hours)
-- [x] Nonce counter at u64::MAX - 1 (verify increment to MAX, then error)
-- [x] Sequence number rollover (u32::MAX → 0 transition)
-- [x] Key epoch overflow (u32::MAX, trigger key rotation or error)
+**2. Counter Overflow Handling** (3 tests, ~2 hours) 🔲 TODO
+- [ ] Nonce counter at u64::MAX - 1 (verify increment to MAX, then trigger key rotation per §6.5.1)
+  - **Blocker:** Requires Session internals access to set nonce counter
+  - **Workflow:** Use `/spec §6.5.1` to verify nonce requirements, consult crypto-impl agent
+  - **Implementation:** Add test-only method to Session for nonce manipulation
+- [ ] Sequence number rollover (u32::MAX → 0 transition per §3.3.10)
+  - **Blocker:** Requires Stream internals to set sequence number
+  - **Workflow:** Use `/spec §3.3.10` to verify monotonicity requirements
+  - **Implementation:** Add test-only method to Stream for sequence manipulation
+- [ ] Key epoch overflow (u32::MAX, verify key rotation trigger per §4.6.3)
+  - **Blocker:** Requires Session internals to set key epoch
+  - **Workflow:** Use `/spec §4.6.3` to verify epoch behavior
+  - **Implementation:** Add test-only method to Session for epoch manipulation
 
-**3. Stream Limit Testing** (3 tests, ~2 hours)
-- [x] Maximum concurrent streams (ZP_MAX_CONCURRENT_STREAMS)
-- [x] Stream ID exhaustion (approach u32::MAX stream IDs)
-- [x] Rapid stream creation/close (1000 streams in <1 second)
+**3. Stream Limit Testing** (3 tests, ~2 hours) 🔲 TODO
+- [ ] Maximum concurrent streams (ZP_MAX_CONCURRENT_STREAMS enforcement)
+  - **Blocker:** Requires connection-level stream tracking
+  - **Workflow:** Use Explore agent to find stream allocation code
+  - **Implementation:** Integration test with real QUIC/TCP connection
+- [ ] Stream ID exhaustion (approach u32::MAX stream IDs)
+  - **Blocker:** Requires stream ID allocator access
+  - **Workflow:** Use `/spec §3.3.1` for stream ID allocation rules
+  - **Implementation:** Mock or fast-forward stream ID counter
+- [ ] Rapid stream creation/close (1000 streams in <1 second stress test)
+  - **Blocker:** Requires connection infrastructure
+  - **Workflow:** Use bench-runner agent for performance analysis
+  - **Implementation:** Multi-threaded stress test with tokio::spawn
 
-**4. Flow Control Edge Cases** (3 tests, ~2 hours)
-- [x] Window size 0 (sender blocked, verify backpressure)
-- [x] Window update overflow (u32::MAX + increment, saturating add)
-- [x] Negative effective window (consumed > initial, should error)
+**4. Flow Control Edge Cases** (3 tests, ~2 hours) 🔲 TODO
+- [ ] Window size 0 (sender blocked, verify backpressure per §3.3.9)
+  - **Blocker:** Requires flow control implementation
+  - **Workflow:** Use `/spec §3.3.9` to verify window behavior
+  - **Implementation:** Integration test with WindowUpdate frames
+- [ ] Window update overflow (u32::MAX + increment, verify saturating add per §3.3.9)
+  - **Blocker:** Requires flow control state access
+  - **Workflow:** Use `/spec §3.3.9` for saturation arithmetic requirement
+  - **Implementation:** Unit test for window update calculation
+- [ ] Negative effective window (consumed > initial, verify ERR_FLOW_CONTROL_VIOLATION)
+  - **Blocker:** Requires flow control tracking
+  - **Workflow:** Use `/spec §3.3.9` for flow violation error
+  - **Implementation:** Integration test with invalid frame sequence
 
 **Implementation Strategy:**
 1. Create `edge_case_tests.rs` for boundary condition tests
@@ -1478,32 +1506,66 @@ Built Docker E2E testing infrastructure to bypass WebRTC ICE localhost limitatio
 
 ---
 
-### Task 5B.2: Concurrency Testing ✅ PLANNED
+### Task 5B.2: Concurrency Testing 🔲 TODO
 **Priority:** P1 (Production systems are concurrent)
 **Files:** `crates/zp-transport/tests/concurrency_tests.rs`
-**Status:** 🔲 Planned
-**Spec Reference:** §3.3 (Stream Multiplexing)
+**Status:** 🔲 0/10 tests complete (0%)
+**Spec Reference:** §3.3 (Stream Multiplexing), §6.5.1 (Nonce atomicity)
 **Current Coverage:** ~60% concurrent paths
 **Target Coverage:** 80% concurrent paths
-**Estimated Effort:** SMALL (6-8 hours)
+**Remaining Effort:** 8-10 hours
 
 **Acceptance Criteria:**
 
-**1. Concurrent Stream Operations** (4 tests, ~3 hours)
-- [x] 1000 concurrent streams (all sending/receiving simultaneously)
-- [x] Interleaved send/recv (stream A sends while stream B receives)
-- [x] Simultaneous stream creation (10 threads create streams concurrently)
-- [x] Stream close race (close while send/recv in progress)
+**1. Concurrent Stream Operations** (4 tests, ~3 hours) 🔲 TODO
+- [ ] 1000 concurrent streams (all sending/receiving simultaneously)
+  - **Blocker:** Requires QUIC connection infrastructure with stream multiplexing
+  - **Workflow:** Use Explore agent to understand QuicConnection stream management
+  - **Commands:** `/spec §3.3` for multiplexing requirements
+  - **Implementation:** Spawn 1000 tokio tasks, each opening/using a stream, verify no ID conflicts
+- [ ] Interleaved send/recv (stream A sends while stream B receives)
+  - **Blocker:** Requires multi-stream connection
+  - **Workflow:** Use integration test pattern from existing tests
+  - **Implementation:** Two concurrent tasks: one continuous send, one continuous recv
+- [ ] Simultaneous stream creation (10 threads create streams concurrently)
+  - **Blocker:** Requires stream ID allocator
+  - **Workflow:** Use `/spec §3.3.1` for stream ID parity rules (client even, server odd)
+  - **Implementation:** Use std::thread or tokio::spawn, verify unique IDs with Arc<Mutex<HashSet>>
+- [ ] Stream close race (close while send/recv in progress)
+  - **Blocker:** Requires stream lifecycle management
+  - **Workflow:** Use `/spec §3.3.11` for stream lifecycle states
+  - **Implementation:** Two tasks: one sending data, one calling close(), verify graceful handling
 
-**2. Encryption Concurrency** (3 tests, ~2 hours)
-- [x] Parallel frame encryption (10 threads encrypt frames simultaneously)
-- [x] Nonce counter race conditions (verify atomic increment)
-- [x] Key rotation during active encryption (rotate while encrypting)
+**2. Encryption Concurrency** (3 tests, ~2-3 hours) 🔲 TODO
+- [ ] Parallel frame encryption (10 threads encrypt frames simultaneously)
+  - **Blocker:** Requires Session with shared encryption state
+  - **Workflow:** Consult crypto-impl agent for thread-safety requirements
+  - **Commands:** `/spec §6.5.1` for nonce counter atomicity
+  - **Implementation:** 10 tokio tasks encrypting frames, verify no nonce collisions
+- [ ] Nonce counter race conditions (verify atomic increment per §6.5.1)
+  - **Blocker:** Requires access to Session nonce counter
+  - **Workflow:** Use crypto-impl agent to verify atomic operations
+  - **Implementation:** 100 tasks incrementing counter 1000 times each, verify final count = 100,000
+- [ ] Key rotation during active encryption (rotate while encrypting per §4.6.4)
+  - **Blocker:** Requires Session key rotation + encryption
+  - **Workflow:** Use `/spec §4.6.4` for rotation protocol requirements
+  - **Commands:** `/vector known mode` for KeyUpdate test vectors
+  - **Implementation:** Background task encrypting continuously, foreground triggers KeyUpdate, verify no failures
 
-**3. Connection Concurrency** (3 tests, ~2 hours)
-- [x] Multiple simultaneous connections (100 connections to same endpoint)
-- [x] Concurrent connect/accept (client connects while server accepts)
-- [x] Shared endpoint stress test (1000 connections through single QuicEndpoint)
+**3. Connection Concurrency** (3 tests, ~3 hours) 🔲 TODO
+- [ ] Multiple simultaneous connections (100 connections to same endpoint)
+  - **Blocker:** Requires QuicEndpoint with connection tracking
+  - **Workflow:** Use platform-specific agent if needed (platform-ios for Network.framework, etc.)
+  - **Implementation:** Spawn 100 client tasks connecting to single server endpoint, verify all succeed
+- [ ] Concurrent connect/accept (client connects while server accepts)
+  - **Blocker:** Requires endpoint client/server coordination
+  - **Workflow:** Use existing integration test patterns
+  - **Implementation:** Server task accepting in loop, 10 clients connecting simultaneously
+- [ ] Shared endpoint stress test (1000 connections through single QuicEndpoint)
+  - **Blocker:** Requires QuicEndpoint resource management
+  - **Workflow:** Use bench-runner agent for performance profiling
+  - **Commands:** `/bench quic` to establish performance baseline
+  - **Implementation:** 1000 sequential connections (open, send, close), verify no resource leaks
 
 **Implementation Strategy:**
 1. Create `concurrency_tests.rs` for multi-threaded tests
@@ -1525,15 +1587,29 @@ Built Docker E2E testing infrastructure to bypass WebRTC ICE localhost limitatio
 ## Phase 5B Quality Gate
 
 **Completion Criteria:**
-- [x] Task 5B.1 complete (12 edge case tests passing)
-- [x] Task 5B.2 complete (10 concurrency tests passing)
-- [x] Edge case coverage: 40% → 80%
-- [x] Concurrency coverage: 60% → 80%
-- [x] Total zp-transport coverage: 70% → **80-85%**
-- [x] All 330 + 22 = 352 tests passing
-- [x] Zero clippy warnings
-- [x] Zero race conditions (verified via miri or loom)
-- [x] CHANGELOG updated with Phase 5B completion
+- [ ] Task 5B.1 complete (12 edge case tests passing) - **3/12 done (25%)**
+- [ ] Task 5B.2 complete (10 concurrency tests passing) - **0/10 done (0%)**
+- [ ] Edge case coverage: 40% → 80%
+- [ ] Concurrency coverage: 60% → 80%
+- [ ] Total zp-transport coverage: 70% → **80-85%**
+- [ ] All 330 + 22 = 352 tests passing (currently: 330 + 3 = 333 tests)
+- [ ] Zero clippy warnings
+- [ ] Zero race conditions (verified via miri or loom)
+- [ ] CHANGELOG updated with Phase 5B completion
+
+**Current Status (2025-12-22):**
+- ✅ Placeholder tests removed (honest test count established)
+- ✅ Frame size boundaries complete (3/3 tests)
+- ⏳ Counter overflow tests blocked on Session internals (0/3)
+- ⏳ Stream limit tests blocked on connection infrastructure (0/3)
+- ⏳ Flow control tests blocked on flow control implementation (0/3)
+- ⏳ Concurrency tests blocked on integration infrastructure (0/10)
+
+**Blocking Issues:**
+1. **Session Internals Access:** Nonce counter, key epoch need test-only accessors
+2. **Flow Control Implementation:** WindowUpdate handling not yet implemented
+3. **Integration Test Infrastructure:** Need real QUIC connections for multi-stream tests
+4. **Concurrency Infrastructure:** Need Session/Connection thread-safety verification
 
 **Deliverables:**
 - 22 new tests (12 edge cases + 10 concurrency)
@@ -1541,37 +1617,127 @@ Built Docker E2E testing infrastructure to bypass WebRTC ICE localhost limitatio
 - Thread safety verification (miri or loom report)
 
 **Timeline:**
-- Day 1: Task 5B.1 (Edge case testing)
-- Day 2: Task 5B.2 (Concurrency testing)
-- Day 3: Verification, documentation, commit
+- Days 1-2: Unblock tests (Session accessors, flow control, infrastructure) - 8-10 hours
+- Days 3-4: Task 5B.1 completion (9 remaining edge case tests) - 6-8 hours
+- Days 5-6: Task 5B.2 completion (10 concurrency tests) - 8-10 hours
+- Day 7: Verification, documentation, commit - 2-3 hours
+
+---
+
+## Phase 5B: Next Steps (Action Plan)
+
+### Immediate Priority: Unblock Test Implementation
+
+**Step 1: Session Internals Access (2-3 hours)**
+- **Task:** Add test-only methods to Session for counter manipulation
+- **Workflow:**
+  1. Use `/spec §6.5.1` to verify nonce counter requirements
+  2. Use Explore agent: "Where is the Session nonce counter implemented?"
+  3. Add `#[cfg(test)]` methods: `set_nonce_counter()`, `set_key_epoch()`
+  4. Consult crypto-impl agent for thread-safety review
+- **Files:** `crates/zp-core/src/session.rs` (or wherever Session is defined)
+- **Agent:** crypto-impl for security review
+
+**Step 2: Flow Control Implementation (4-6 hours)**
+- **Task:** Implement basic flow control per §3.3.9
+- **Workflow:**
+  1. Use `/spec §3.3.9` to understand WindowUpdate requirements
+  2. Use `/vector` to find WindowUpdate test vectors
+  3. Implement window tracking (connection-level + per-stream)
+  4. Implement WindowUpdate frame handling
+- **Files:** `crates/zp-core/src/flow_control.rs` (new), connection layer updates
+- **Agent:** Use Task tool with Plan agent for architecture design
+
+**Step 3: Integration Test Infrastructure (2-3 hours)**
+- **Task:** Create helper functions for multi-stream testing
+- **Workflow:**
+  1. Use Explore agent: "How do existing QUIC integration tests work?"
+  2. Create `test_helpers.rs` with connection setup utilities
+  3. Add helper for spawning multiple streams on one connection
+- **Files:** `crates/zp-transport/tests/test_helpers.rs` (new)
+
+### Implementation Order (Follow CLAUDE.md)
+
+**Option A: Incremental (Recommended)**
+1. Implement Session accessors → Unblock counter overflow tests (3 tests)
+2. Implement flow control → Unblock flow control tests (3 tests)
+3. Build integration helpers → Unblock stream limit tests (3 tests)
+4. Build concurrency infrastructure → Unblock concurrency tests (10 tests)
+
+**Option B: By Priority**
+1. Counter overflow tests (highest risk: u64::MAX nonce exhaustion)
+2. Concurrency tests (production systems are concurrent)
+3. Stream limits (DoS protection)
+4. Flow control (backpressure handling)
+
+### Using Agents/Commands Effectively
+
+**For Counter Overflow Tests:**
+```bash
+/spec §6.5.1        # Understand nonce requirements
+/spec §4.6.3        # Understand key epoch behavior
+# Consult crypto-impl agent for nonce counter thread safety
+```
+
+**For Stream Limit Tests:**
+```bash
+/spec §3.3.1        # Stream ID allocation rules
+# Use Explore agent: "Where is stream ID allocation implemented?"
+# Use Task tool with Explore: "Find all code that tracks active streams"
+```
+
+**For Flow Control Tests:**
+```bash
+/spec §3.3.9        # Flow control requirements
+/vector             # Search for WindowUpdate test vectors
+# Use Task tool with Plan agent for flow control architecture
+```
+
+**For Concurrency Tests:**
+```bash
+/spec §3.3          # Stream multiplexing
+/spec §6.5.1        # Nonce counter atomicity
+# Use crypto-impl agent for encryption concurrency review
+# Use bench-runner agent for stress test performance baseline
+```
 
 ---
 
 ## Phase 5 Hardening Summary
 
-**Total Additional Effort:** 40-52 hours (5-7 days)
+**Total Effort:** 40-52 hours (5-7 days)
+**Current Progress:** 44/63 tests complete (69.8%)
 
-**Phase 5A (Critical):**
-- Task 5A.1: WebRTC error handling (24 tests, 16-20h)
-- Task 5A.2: Transport error paths (17 tests, 8-10h)
-- **Subtotal:** 41 tests, 24-30 hours
-- **Coverage:** 49.25% → **70%**
+**Phase 5A (Critical):** ✅ COMPLETE (2025-12-22)
+- Task 5A.1: WebRTC error handling (24 tests, ~16h)
+- Task 5A.2: Transport error paths (17 tests, ~8h)  - Task 5A.3: WebRTC Docker E2E (6 tests, ~6h)
+- **Subtotal:** 47 tests complete, ~30 hours
+- **Coverage:** 49.25% → **70%** ✅
 
-**Phase 5B (Hardening):**
-- Task 5B.1: Edge case testing (12 tests, 6-8h)
-- Task 5B.2: Concurrency testing (10 tests, 6-8h)
-- **Subtotal:** 22 tests, 12-16 hours
-- **Coverage:** 70% → **80-85%**
+**Phase 5B (Hardening):** 🟡 IN PROGRESS (Started 2025-12-22)
+- Task 5B.1: Edge case testing (3/12 tests, 25% complete)
+  - ✅ Frame size boundaries (3/3)
+  - ⏳ Counter overflow (0/3)
+  - ⏳ Stream limits (0/3)
+  - ⏳ Flow control (0/3)
+- Task 5B.2: Concurrency testing (0/10 tests, 0% complete)
+  - ⏳ Concurrent streams (0/4)
+  - ⏳ Encryption concurrency (0/3)
+  - ⏳ Connection concurrency (0/3)
+- **Subtotal:** 3/22 tests complete, ~2 hours invested, 14-18 hours remaining
+- **Coverage:** 70% → **80-85%** (target)
 
-**Final Test Count:** 352 tests (289 existing + 63 new)
-**Final Coverage:** **80-85%** (production-ready for scale)
+**Current Test Count:** 333 tests (330 existing + 3 edge case)
+**Target Test Count:** 352 tests (330 existing + 22 Phase 5B)
+**Current Coverage:** **70%** (Phase 5A complete)
+**Target Coverage:** **80-85%** (Phase 5B target)
 
-**Quality Assessment Post-Hardening:**
+**Quality Assessment Current State:**
 - ✅ Production-ready for happy path (100% spec compliance)
-- ✅ Production-ready for error handling (60% → 80% error paths)
-- ✅ Production-ready for edge cases (40% → 80% edge cases)
-- ✅ Production-ready for concurrency (60% → 80% concurrent paths)
-- ✅ WebRTC production-ready (26.87% → 70% coverage)
+- ✅ Production-ready for error handling (60% → 70% error paths) - Phase 5A complete
+- 🟡 Edge case testing (40% → ~45% current, target 80%) - Phase 5B partial
+- 🟡 Concurrency testing (~60% current, target 80%) - Phase 5B TODO
+- ✅ WebRTC production-ready (26.87% → 70% coverage) - Phase 5A.3 complete
 
 **Manual Verification Checklist** (Pre-Release):
 - [x] WebRTC network tests (3 tests, require STUN server)
