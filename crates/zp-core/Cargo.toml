@@ -38,3 +38,5 @@ hex = { workspace = true }
 [features]
 default = ["std"]
 std = []
+# Test-only feature: Exposes Session test helpers for overflow testing
+test-helpers = []

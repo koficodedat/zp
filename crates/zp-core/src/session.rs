@@ -2085,6 +2085,74 @@ impl Session {
     }
 }
 
+/// Test-only methods for manipulating session internals.
+///
+/// These methods exist solely to test overflow behavior and edge cases.
+/// They are compiled out entirely in release builds via the `test-helpers` feature.
+///
+/// To use in tests: Add `zp-core = { path = "../zp-core", features = ["test-helpers"] }`
+#[cfg(any(test, feature = "test-helpers"))]
+impl Session {
+    /// Test-only: Set send_nonce to test overflow behavior.
+    ///
+    /// # Cryptographic Safety
+    /// Setting send_nonce to a previously used value with the same key
+    /// causes **CATASTROPHIC NONCE REUSE**, completely breaking AEAD security.
+    /// This method exists ONLY to test overflow protection at u64::MAX.
+    ///
+    /// # Spec Reference
+    /// Per §6.5.1: "The counter MUST NOT wrap; if it reaches 2^64 - 1,
+    /// trigger key rotation before sending the next message."
+    ///
+    /// # Usage
+    /// ```ignore
+    /// session.test_set_send_nonce(u64::MAX - 1);
+    /// // Next encrypt should succeed (nonce = MAX)
+    /// // Following encrypt should error (overflow protection)
+    /// ```
+    ///
+    /// # Safety
+    /// This bypasses normal nonce increment logic. Only use for testing
+    /// overflow protection. Never set to same value twice with same key.
+    pub fn test_set_send_nonce(&mut self, value: u64) {
+        if let Some(keys) = &mut self.keys {
+            keys.send_nonce = value;
+        }
+    }
+
+    /// Test-only: Set recv_nonce to test overflow behavior.
+    ///
+    /// # Cryptographic Safety
+    /// See documentation on `test_set_send_nonce`. Same nonce reuse
+    /// danger applies for receive-side nonces.
+    ///
+    /// # Spec Reference
+    /// Per §6.5.1: Receive nonces must be strictly monotonically increasing
+    /// to prevent replay attacks. Counter overflow must be prevented.
+    pub fn test_set_recv_nonce(&mut self, value: u64) {
+        if let Some(keys) = &mut self.keys {
+            keys.recv_nonce = value;
+        }
+    }
+
+    /// Test-only: Set key_epoch to test epoch overflow.
+    ///
+    /// # Spec Reference
+    /// Per §4.6.2, key_epoch is u32 and increments on each rotation.
+    /// This tests behavior at u32::MAX.
+    ///
+    /// # Usage
+    /// ```ignore
+    /// session.test_set_key_epoch(u32::MAX);
+    /// // Next key rotation should fail (overflow protection)
+    /// ```
+    pub fn test_set_key_epoch(&mut self, value: u32) {
+        if let Some(keys) = &mut self.keys {
+            keys.key_epoch = value;
+        }
+    }
+}
+
 impl Default for Session {
     fn default() -> Self {
         Self::new(Role::Client, HandshakeMode::Stranger)

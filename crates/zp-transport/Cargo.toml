@@ -46,6 +46,8 @@ path = "bin/webrtc-test-peer.rs"
 required-features = ["test-peer"]
 
 [dev-dependencies]
+# Enable test-helpers feature for Session test accessors
+zp-core = { path = "../zp-core", features = ["test-helpers"] }
 proptest = { workspace = true }
 warp = "0.3"
 uuid = { version = "1.6", features = ["v4", "serde"] }
