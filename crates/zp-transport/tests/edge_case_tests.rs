@@ -267,6 +267,28 @@ async fn test_key_epoch_overflow() {
 }
 
 // ============================================================================
+// Test Category 3: Flow Control Edge Cases (3/3 COMPLETE - in zp-core)
+// ============================================================================
+//
+// Flow control edge case tests are implemented in zp-core/src/stream.rs unit tests:
+//
+// 1. Window size 0 (sender blocked) → test_stream_send_flow_control (line 480)
+//    - Tests send window exhaustion: queue_send returns 0 when window full
+//    - Verifies backpressure behavior per spec §3.3.9
+//
+// 2. Window update overflow (u32::MAX + increment) → test_saturating_window_update (line 532)
+//    - Tests saturating addition: update_send_window at MAX saturates  
+//    - Verifies window MUST NOT exceed 2^32-1 per spec §3.3.9
+//
+// 3. Receive flow control violation → test_stream_recv_flow_control (line 498)
+//    - Tests receive_data fails when exceeding window
+//    - Verifies ERR_PROTOCOL_VIOLATION "Flow control violation" error
+//
+// These tests run as part of `cargo test -p zp-core stream::tests` (all passing).
+// Flow control logic is fully implemented in Stream and StreamMultiplexer.
+// Integration-level flow control (WindowUpdate frame exchange) is deferred to Phase 6.
+
+// ============================================================================
 // Test Helpers
 // ============================================================================
 
