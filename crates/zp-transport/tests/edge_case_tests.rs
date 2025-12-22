@@ -277,7 +277,7 @@ async fn test_key_epoch_overflow() {
 //    - Verifies backpressure behavior per spec §3.3.9
 //
 // 2. Window update overflow (u32::MAX + increment) → test_saturating_window_update (line 532)
-//    - Tests saturating addition: update_send_window at MAX saturates  
+//    - Tests saturating addition: update_send_window at MAX saturates
 //    - Verifies window MUST NOT exceed 2^32-1 per spec §3.3.9
 //
 // 3. Receive flow control violation → test_stream_recv_flow_control (line 498)
