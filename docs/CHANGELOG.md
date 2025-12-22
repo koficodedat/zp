@@ -13,16 +13,17 @@
 **In Progress:**
 - **Phase 5B: Full Hardening** (Started 2025-12-22)
   - Status: Phase 5A complete (error paths 60%, total 70%), Phase 5B in progress
-  - Edge case testing: 3/12 tests implemented (frame size boundaries complete)
+  - Edge case testing: 6/12 tests implemented (50% complete)
     - ✅ Frame Size Boundaries: 3/3 tests (max size, oversized, empty payload)
-    - ⏳ Counter Overflow: 0/3 tests (requires Session internals access)
+    - ✅ Counter Overflow: 3/3 tests (send_nonce, recv_nonce, key_epoch at u64/u32::MAX)
     - ⏳ Stream Limits: 0/3 tests (requires connection-level testing)
     - ⏳ Flow Control: 0/3 tests (requires flow control implementation)
   - Concurrency testing: 0/10 tests (requires integration-level infrastructure)
     - ⏳ Concurrent Stream Operations: 0/4 tests
     - ⏳ Encryption Concurrency: 0/3 tests
     - ⏳ Connection Concurrency: 0/3 tests
-  - Total Phase 5 impact: 44 new tests (41 error handling + 3 edge case tests)
+  - Total Phase 5 impact: 63 new tests planned (41 error handling + 12 edge case + 10 concurrency)
+  - Tests implemented: 47/63 (Phase 5A: 41/41 complete, Phase 5B: 6/22 complete)
   - Coverage: 49.25% → 66.87% (Phase 5A complete) → 70% (current, Phase 5B partial)
 
 **Added:**
