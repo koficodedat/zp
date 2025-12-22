@@ -84,9 +84,16 @@ impl QuicEndpoint {
             .with_no_client_auth();
 
         let mut transport = quinn::TransportConfig::default();
-        // Allow up to 100 concurrent streams per spec recommendation
-        transport.max_concurrent_bidi_streams(VarInt::from_u32(1000)); // Support concurrency stress testing
+        // Concurrency limits for stress testing (1000 concurrent streams)
+        transport.max_concurrent_bidi_streams(VarInt::from_u32(1000));
         transport.max_concurrent_uni_streams(VarInt::from_u32(0)); // Reject unidirectional per spec §3.4
+
+        // Flow control windows for high concurrency
+        transport.stream_receive_window(VarInt::from_u32(2 * 1024 * 1024)); // 2MB per stream
+        transport.receive_window(VarInt::from_u32(20 * 1024 * 1024)); // 20MB connection-level
+
+        // Keep-alive for long-lived connections
+        transport.keep_alive_interval(Some(std::time::Duration::from_secs(5)));
 
         let mut client_config = ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
@@ -136,8 +143,16 @@ impl QuicEndpoint {
         server_crypto.max_early_data_size = 0; // Disable 0-RTT for security
 
         let mut transport = quinn::TransportConfig::default();
-        transport.max_concurrent_bidi_streams(VarInt::from_u32(1000)); // Support concurrency stress testing
+        // Concurrency limits for stress testing (1000 concurrent streams)
+        transport.max_concurrent_bidi_streams(VarInt::from_u32(1000));
         transport.max_concurrent_uni_streams(VarInt::from_u32(0)); // Reject unidirectional per spec §3.4
+
+        // Flow control windows for high concurrency
+        transport.stream_receive_window(VarInt::from_u32(2 * 1024 * 1024)); // 2MB per stream
+        transport.receive_window(VarInt::from_u32(20 * 1024 * 1024)); // 20MB connection-level
+
+        // Keep-alive for long-lived connections
+        transport.keep_alive_interval(Some(std::time::Duration::from_secs(5)));
 
         let mut server_config = ServerConfig::with_crypto(Arc::new(
             quinn::crypto::rustls::QuicServerConfig::try_from(server_crypto)
