@@ -85,7 +85,7 @@ impl QuicEndpoint {
 
         let mut transport = quinn::TransportConfig::default();
         // Allow up to 100 concurrent streams per spec recommendation
-        transport.max_concurrent_bidi_streams(VarInt::from_u32(100));
+        transport.max_concurrent_bidi_streams(VarInt::from_u32(1000)); // Support concurrency stress testing
         transport.max_concurrent_uni_streams(VarInt::from_u32(0)); // Reject unidirectional per spec §3.4
 
         let mut client_config = ClientConfig::new(Arc::new(
@@ -136,7 +136,7 @@ impl QuicEndpoint {
         server_crypto.max_early_data_size = 0; // Disable 0-RTT for security
 
         let mut transport = quinn::TransportConfig::default();
-        transport.max_concurrent_bidi_streams(VarInt::from_u32(100));
+        transport.max_concurrent_bidi_streams(VarInt::from_u32(1000)); // Support concurrency stress testing
         transport.max_concurrent_uni_streams(VarInt::from_u32(0)); // Reject unidirectional per spec §3.4
 
         let mut server_config = ServerConfig::with_crypto(Arc::new(
@@ -237,6 +237,12 @@ impl QuicEndpoint {
 /// - Control stream (stream 0) for protocol control frames
 /// - Data streams (4+) for application data
 /// - zp session state machine integration
+///
+/// QUIC connection to a peer.
+///
+/// Thread-safe: Can be cloned and shared across async tasks.
+/// All fields use Arc internally for efficient cloning.
+#[derive(Clone)]
 pub struct QuicConnection {
     connection: quinn::Connection,
     session: Arc<RwLock<Session>>,

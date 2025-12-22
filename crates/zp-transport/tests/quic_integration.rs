@@ -392,11 +392,8 @@ async fn test_rapid_stream_creation_stress() {
         // Accept all incoming streams (client will open 1000)
         let mut accepted_count = 0;
         for _ in 0..1000 {
-            match tokio::time::timeout(
-                tokio::time::Duration::from_secs(5),
-                conn.accept_stream(),
-            )
-            .await
+            match tokio::time::timeout(tokio::time::Duration::from_secs(5), conn.accept_stream())
+                .await
             {
                 Ok(Ok(_stream)) => {
                     accepted_count += 1;
