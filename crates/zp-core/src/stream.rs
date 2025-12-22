@@ -38,10 +38,18 @@ pub struct Stream {
     send_buffer: VecDeque<u8>,
     /// Receive buffer for incoming data.
     recv_buffer: VecDeque<u8>,
-    /// Global sequence number for this stream.
+    /// Global sequence number for this stream (wire-level bytes sent).
     global_seq: u64,
-    /// Last acknowledged byte.
+    /// Last acknowledged byte (wire-level acknowledgment).
     last_acked: u64,
+    /// Application send offset (next byte to be written by app).
+    ///
+    /// Spec: §6.5 - State Token stream offset fields
+    send_offset: u64,
+    /// Application receive offset (next byte to be read by app).
+    ///
+    /// Spec: §6.5 - State Token stream offset fields
+    recv_offset: u64,
 }
 
 /// Stream states per spec §3.3.11.
@@ -71,6 +79,8 @@ impl Stream {
             recv_buffer: VecDeque::new(),
             global_seq: 0,
             last_acked: 0,
+            send_offset: 0,
+            recv_offset: 0,
         }
     }
 
@@ -258,6 +268,20 @@ impl Stream {
     /// Get last acknowledged byte.
     pub fn last_acked(&self) -> u64 {
         self.last_acked
+    }
+
+    /// Get application send offset (next byte to be written by app).
+    ///
+    /// Spec: §6.5 - State Token stream offset fields
+    pub fn send_offset(&self) -> u64 {
+        self.send_offset
+    }
+
+    /// Get application receive offset (next byte to be read by app).
+    ///
+    /// Spec: §6.5 - State Token stream offset fields
+    pub fn recv_offset(&self) -> u64 {
+        self.recv_offset
     }
 
     /// Acknowledge sent bytes.

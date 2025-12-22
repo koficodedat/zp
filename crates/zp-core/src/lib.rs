@@ -16,8 +16,10 @@ pub mod error;
 pub mod frame;
 pub mod session;
 pub mod stream;
+pub mod token;
 
 pub use error::{Error, ErrorCode, Result};
 pub use frame::Frame;
 pub use session::Session;
 pub use stream::Stream;
+pub use token::StateToken;

@@ -394,9 +394,7 @@ impl QuicConnection {
                 // Note: WindowUpdate already sent in from_client()
 
                 // 1. Generate and send ClientHello
-                let client_hello = session
-                    .client_start_stranger()
-                    .map_err(Error::Protocol)?;
+                let client_hello = session.client_start_stranger().map_err(Error::Protocol)?;
                 control_stream.send_frame(&client_hello).await?;
 
                 // 2. Receive frames (skip WindowUpdate, expect ServerHello)
