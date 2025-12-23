@@ -1259,6 +1259,7 @@ fn test_sync_frame_stream_count_limit() {
 fn test_state_token_save_restore_roundtrip() {
     use zp_core::stream::Stream;
     use zp_core::token::ConnectionContext;
+    use zp_platform::mock::MockKeyProvider;
 
     // Create and establish session
     let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
@@ -1270,8 +1271,8 @@ fn test_state_token_save_restore_roundtrip() {
     let client_finish = client.client_process_server_hello(server_hello).unwrap();
     server.server_process_client_finish(client_finish).unwrap();
 
-    // Create device-bound key (32 bytes)
-    let device_key: [u8; 32] = [0x42; 32];
+    // Create device-bound key provider (deterministic for testing)
+    let provider = MockKeyProvider::with_key([0x42; 32]);
 
     // Create some active streams
     let streams = vec![
@@ -1291,7 +1292,7 @@ fn test_state_token_save_restore_roundtrip() {
 
     // Save state token
     let storage_blob = client
-        .save_state_token(&device_key, &streams, connection_context)
+        .save_state_token(&provider, &streams, connection_context)
         .unwrap();
 
     // Verify storage blob structure: token_nonce[12] || header[16] || ciphertext || tag[16]
@@ -1302,7 +1303,7 @@ fn test_state_token_save_restore_roundtrip() {
 
     // Restore from token
     let restored_token = restored_client
-        .restore_from_token(&device_key, &storage_blob)
+        .restore_from_token(&provider, &storage_blob)
         .unwrap();
 
     // Verify restored token has correct fields
@@ -1316,6 +1317,7 @@ fn test_state_token_expiration() {
     use std::time::{SystemTime, UNIX_EPOCH};
     use zp_core::stream::Stream;
     use zp_core::token::ConnectionContext;
+    use zp_platform::mock::MockKeyProvider;
 
     // Create and establish session
     let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
@@ -1327,7 +1329,7 @@ fn test_state_token_expiration() {
     let client_finish = client.client_process_server_hello(server_hello).unwrap();
     server.server_process_client_finish(client_finish).unwrap();
 
-    let device_key: [u8; 32] = [0x42; 32];
+    let provider = MockKeyProvider::with_key([0x42; 32]);
     let streams = vec![Stream::new(0, 128)];
     let connection_context = ConnectionContext {
         connection_id: [1u8; 20],
@@ -1339,7 +1341,7 @@ fn test_state_token_expiration() {
 
     // Save token
     let mut storage_blob = client
-        .save_state_token(&device_key, &streams, connection_context)
+        .save_state_token(&provider, &streams, connection_context)
         .unwrap();
 
     // Manually manipulate timestamp to be 25 hours old (expired)
@@ -1358,7 +1360,7 @@ fn test_state_token_expiration() {
 
     // Try to restore - should fail with TokenExpired
     let mut restored_client = Session::new(Role::Client, HandshakeMode::Stranger);
-    let result = restored_client.restore_from_token(&device_key, &storage_blob);
+    let result = restored_client.restore_from_token(&provider, &storage_blob);
 
     assert!(result.is_err());
     match result {
@@ -1371,6 +1373,7 @@ fn test_state_token_expiration() {
 fn test_state_token_wrong_key() {
     use zp_core::stream::Stream;
     use zp_core::token::ConnectionContext;
+    use zp_platform::mock::MockKeyProvider;
 
     // Create and establish session
     let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
@@ -1382,8 +1385,8 @@ fn test_state_token_wrong_key() {
     let client_finish = client.client_process_server_hello(server_hello).unwrap();
     server.server_process_client_finish(client_finish).unwrap();
 
-    let device_key: [u8; 32] = [0x42; 32];
-    let wrong_key: [u8; 32] = [0x99; 32]; // Different key
+    let provider = MockKeyProvider::with_key([0x42; 32]);
+    let wrong_provider = MockKeyProvider::with_key([0x99; 32]); // Different key
     let streams = vec![Stream::new(0, 128)];
     let connection_context = ConnectionContext {
         connection_id: [1u8; 20],
@@ -1395,12 +1398,12 @@ fn test_state_token_wrong_key() {
 
     // Save with correct key
     let storage_blob = client
-        .save_state_token(&device_key, &streams, connection_context)
+        .save_state_token(&provider, &streams, connection_context)
         .unwrap();
 
     // Try to restore with wrong key
     let mut restored_client = Session::new(Role::Client, HandshakeMode::Stranger);
-    let result = restored_client.restore_from_token(&wrong_key, &storage_blob);
+    let result = restored_client.restore_from_token(&wrong_provider, &storage_blob);
 
     // Should fail with ProtocolViolation (decryption failure)
     assert!(result.is_err());
@@ -1414,6 +1417,7 @@ fn test_state_token_wrong_key() {
 fn test_state_token_stream_limit() {
     use zp_core::stream::Stream;
     use zp_core::token::ConnectionContext;
+    use zp_platform::mock::MockKeyProvider;
 
     // Create and establish session
     let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
@@ -1425,7 +1429,7 @@ fn test_state_token_stream_limit() {
     let client_finish = client.client_process_server_hello(server_hello).unwrap();
     server.server_process_client_finish(client_finish).unwrap();
 
-    let device_key: [u8; 32] = [0x42; 32];
+    let provider = MockKeyProvider::with_key([0x42; 32]);
     let connection_context = ConnectionContext {
         connection_id: [1u8; 20],
         peer_address: [2u8; 18],
@@ -1441,7 +1445,7 @@ fn test_state_token_stream_limit() {
     }
 
     // Should fail with ProtocolViolation
-    let result = client.save_state_token(&device_key, &streams, connection_context);
+    let result = client.save_state_token(&provider, &streams, connection_context);
     assert!(result.is_err());
     match result {
         Err(zp_core::error::Error::ProtocolViolation(msg)) => {
@@ -1455,6 +1459,7 @@ fn test_state_token_stream_limit() {
 fn test_state_token_nonce_skip() {
     use zp_core::stream::Stream;
     use zp_core::token::ConnectionContext;
+    use zp_platform::mock::MockKeyProvider;
 
     // Create and establish session
     let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
@@ -1466,7 +1471,7 @@ fn test_state_token_nonce_skip() {
     let client_finish = client.client_process_server_hello(server_hello).unwrap();
     server.server_process_client_finish(client_finish).unwrap();
 
-    let device_key: [u8; 32] = [0x42; 32];
+    let provider = MockKeyProvider::with_key([0x42; 32]);
     let streams = vec![Stream::new(0, 128)];
     let connection_context = ConnectionContext {
         connection_id: [1u8; 20],
@@ -1478,7 +1483,7 @@ fn test_state_token_nonce_skip() {
 
     // Save state token
     let storage_blob = client
-        .save_state_token(&device_key, &streams, connection_context)
+        .save_state_token(&provider, &streams, connection_context)
         .unwrap();
 
     // Restore and verify token structure
@@ -1486,7 +1491,7 @@ fn test_state_token_nonce_skip() {
     // per spec §6.5. The returned token contains the original nonce values from storage.
     let mut restored_client = Session::new(Role::Client, HandshakeMode::Stranger);
     let restored_token = restored_client
-        .restore_from_token(&device_key, &storage_blob)
+        .restore_from_token(&provider, &storage_blob)
         .unwrap();
 
     // Verify token was restored successfully
@@ -1498,6 +1503,7 @@ fn test_state_token_nonce_skip() {
 fn test_state_token_structure() {
     use zp_core::stream::Stream;
     use zp_core::token::ConnectionContext;
+    use zp_platform::mock::MockKeyProvider;
 
     // Create and establish session
     let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
@@ -1509,7 +1515,7 @@ fn test_state_token_structure() {
     let client_finish = client.client_process_server_hello(server_hello).unwrap();
     server.server_process_client_finish(client_finish).unwrap();
 
-    let device_key: [u8; 32] = [0x42; 32];
+    let provider = MockKeyProvider::with_key([0x42; 32]);
     let streams = vec![Stream::new(0, 128)];
     let connection_context = ConnectionContext {
         connection_id: [1u8; 20],
@@ -1521,7 +1527,7 @@ fn test_state_token_structure() {
 
     // Save state token
     let storage_blob = client
-        .save_state_token(&device_key, &streams, connection_context)
+        .save_state_token(&provider, &streams, connection_context)
         .unwrap();
 
     // Verify token structure per spec §6.5

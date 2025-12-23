@@ -2006,7 +2006,7 @@ impl Session {
     ///
     /// # Arguments
     ///
-    /// * `device_key` - 32-byte device-bound encryption key (from Secure Enclave, KeyStore, etc.)
+    /// * `key_provider` - Platform-specific key provider (e.g., SecureEnclaveKeyProvider, MockKeyProvider)
     /// * `streams` - Slice of active streams to include in token (max 12)
     /// * `connection_context` - Connection-specific metadata (connection_id, peer_address, etc.)
     ///
@@ -2031,7 +2031,7 @@ impl Session {
     /// §6.5.1 - AEAD Nonce Construction
     pub fn save_state_token(
         &self,
-        device_key: &[u8; 32],
+        key_provider: &dyn zp_platform::traits::KeyProvider,
         streams: &[crate::stream::Stream],
         connection_context: crate::token::ConnectionContext,
     ) -> Result<Vec<u8>> {
@@ -2138,8 +2138,13 @@ impl Session {
         let mut token_nonce = [0u8; 12];
         rand::rngs::OsRng.fill_bytes(&mut token_nonce);
 
+        // Get device key from provider
+        let device_key = key_provider
+            .get_device_key()
+            .map_err(|e| Error::ProtocolViolation(format!("Failed to get device key: {}", e)))?;
+
         // Encrypt with AES-256-GCM
-        let cipher = Aes256Gcm::new_from_slice(device_key)
+        let cipher = Aes256Gcm::new_from_slice(&*device_key)
             .map_err(|e| Error::ProtocolViolation(format!("AES-256-GCM init failed: {}", e)))?;
 
         let payload = Payload {
@@ -2162,6 +2167,66 @@ impl Session {
         Ok(storage_blob)
     }
 
+    /// Save session state with raw device key (backward compatibility wrapper).
+    ///
+    /// This is a backward compatibility wrapper around `save_state_token()` that accepts
+    /// a raw 32-byte device key instead of a KeyProvider trait object.
+    ///
+    /// # Deprecated
+    ///
+    /// Prefer using `save_state_token()` with a platform-specific KeyProvider implementation
+    /// for better testability and platform abstraction.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_key` - 32-byte device-bound encryption key (from Secure Enclave, KeyStore, etc.)
+    /// * `streams` - Slice of active streams to include in token (max 12)
+    /// * `connection_context` - Connection-specific metadata (connection_id, peer_address, etc.)
+    ///
+    /// # Returns
+    ///
+    /// Returns encrypted token blob (same format as `save_state_token()`).
+    pub fn save_state_token_legacy(
+        &self,
+        device_key: &[u8; 32],
+        streams: &[crate::stream::Stream],
+        connection_context: crate::token::ConnectionContext,
+    ) -> Result<Vec<u8>> {
+        use zeroize::Zeroizing;
+
+        // Simple wrapper that implements KeyProvider for a raw byte key
+        struct RawKeyProvider {
+            key: Zeroizing<[u8; 32]>,
+        }
+
+        impl zp_platform::traits::KeyProvider for RawKeyProvider {
+            fn get_device_key(
+                &self,
+            ) -> std::result::Result<Zeroizing<[u8; 32]>, zp_platform::error::Error> {
+                Ok(Zeroizing::new(*self.key))
+            }
+
+            fn encrypt(
+                &self,
+                _plaintext: &[u8],
+            ) -> std::result::Result<Vec<u8>, zp_platform::error::Error> {
+                unimplemented!("save_state_token only uses get_device_key()")
+            }
+
+            fn decrypt(
+                &self,
+                _ciphertext: &[u8],
+            ) -> std::result::Result<Vec<u8>, zp_platform::error::Error> {
+                unimplemented!("save_state_token only uses get_device_key()")
+            }
+        }
+
+        let provider = RawKeyProvider {
+            key: Zeroizing::new(*device_key),
+        };
+        self.save_state_token(&provider, streams, connection_context)
+    }
+
     /// Restore session from an encrypted State Token per spec §6.5.
     ///
     /// Decrypts and validates a State Token, restoring the session's cryptographic
@@ -2169,7 +2234,7 @@ impl Session {
     ///
     /// # Arguments
     ///
-    /// * `device_key` - 32-byte device-bound decryption key (same key used for encryption)
+    /// * `key_provider` - Platform-specific key provider (e.g., SecureEnclaveKeyProvider, MockKeyProvider)
     /// * `storage_blob` - Encrypted token blob (token_nonce[12] || header[16] || ciphertext || tag[16])
     ///
     /// # Returns
@@ -2191,7 +2256,7 @@ impl Session {
     /// §6.5.1 - AEAD Nonce Construction
     pub fn restore_from_token(
         &mut self,
-        device_key: &[u8; 32],
+        key_provider: &dyn zp_platform::traits::KeyProvider,
         storage_blob: &[u8],
     ) -> Result<crate::token::StateToken> {
         use crate::token::{StateToken, TokenHeader};
@@ -2231,8 +2296,13 @@ impl Session {
             return Err(Error::TokenExpired);
         }
 
+        // Get device key from provider
+        let device_key = key_provider
+            .get_device_key()
+            .map_err(|e| Error::ProtocolViolation(format!("Failed to get device key: {}", e)))?;
+
         // Decrypt with AES-256-GCM
-        let cipher = Aes256Gcm::new_from_slice(device_key)
+        let cipher = Aes256Gcm::new_from_slice(&*device_key)
             .map_err(|e| Error::ProtocolViolation(format!("AES-256-GCM init failed: {}", e)))?;
 
         let payload = Payload {
@@ -2287,6 +2357,64 @@ impl Session {
         self.keys = Some(restored_keys);
 
         Ok(token)
+    }
+
+    /// Restore session from encrypted State Token with raw device key (backward compatibility wrapper).
+    ///
+    /// This is a backward compatibility wrapper around `restore_from_token()` that accepts
+    /// a raw 32-byte device key instead of a KeyProvider trait object.
+    ///
+    /// # Deprecated
+    ///
+    /// Prefer using `restore_from_token()` with a platform-specific KeyProvider implementation
+    /// for better testability and platform abstraction.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_key` - 32-byte device-bound decryption key (same key used for encryption)
+    /// * `storage_blob` - Encrypted token blob (token_nonce[12] || header[16] || ciphertext || tag[16])
+    ///
+    /// # Returns
+    ///
+    /// Returns the decrypted StateToken (same as `restore_from_token()`).
+    pub fn restore_from_token_legacy(
+        &mut self,
+        device_key: &[u8; 32],
+        storage_blob: &[u8],
+    ) -> Result<crate::token::StateToken> {
+        use zeroize::Zeroizing;
+
+        // Simple wrapper that implements KeyProvider for a raw byte key
+        struct RawKeyProvider {
+            key: Zeroizing<[u8; 32]>,
+        }
+
+        impl zp_platform::traits::KeyProvider for RawKeyProvider {
+            fn get_device_key(
+                &self,
+            ) -> std::result::Result<Zeroizing<[u8; 32]>, zp_platform::error::Error> {
+                Ok(Zeroizing::new(*self.key))
+            }
+
+            fn encrypt(
+                &self,
+                _plaintext: &[u8],
+            ) -> std::result::Result<Vec<u8>, zp_platform::error::Error> {
+                unimplemented!("restore_from_token only uses get_device_key()")
+            }
+
+            fn decrypt(
+                &self,
+                _ciphertext: &[u8],
+            ) -> std::result::Result<Vec<u8>, zp_platform::error::Error> {
+                unimplemented!("restore_from_token only uses get_device_key()")
+            }
+        }
+
+        let provider = RawKeyProvider {
+            key: Zeroizing::new(*device_key),
+        };
+        self.restore_from_token(&provider, storage_blob)
     }
 
     // === EncryptedRecord encryption/decryption (§3.3.13) ===

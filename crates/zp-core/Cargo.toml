@@ -11,6 +11,7 @@ description = "Core protocol engine for the zp transport protocol"
 [dependencies]
 # Internal dependencies
 zp-crypto = { path = "../zp-crypto" }
+zp-platform = { path = "../zp-platform" }
 
 # Security
 zeroize = { workspace = true }
