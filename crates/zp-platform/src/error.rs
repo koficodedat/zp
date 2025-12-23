@@ -19,8 +19,4 @@ pub enum Error {
     /// Background task error.
     #[error("Background task error: {0}")]
     BackgroundTask(String),
-
-    /// Protocol error from core.
-    #[error("Protocol error: {0}")]
-    Protocol(#[from] zp_core::Error),
 }

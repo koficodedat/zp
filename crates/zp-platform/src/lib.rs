@@ -9,6 +9,8 @@
 #![warn(missing_docs)]
 
 pub mod error;
+pub mod mock;
+pub mod traits;
 
 #[cfg(feature = "ios")]
 pub mod ios;
@@ -20,3 +22,4 @@ pub mod android;
 pub mod browser;
 
 pub use error::{Error, Result};
+pub use traits::{InterfaceType, KeyProvider, NetworkMonitor, NetworkPath};
