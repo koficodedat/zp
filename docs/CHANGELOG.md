@@ -117,17 +117,43 @@
     - Zero clippy warnings, all tests passing
   - Status: State Token encryption complete with platform abstraction. Session API now supports pluggable key providers (iOS Secure Enclave, Android KeyStore, browser WebCrypto via trait). Ready for Android/browser platform implementations.
 
-- **Phase 5B: Full Hardening** (Started 2025-12-22, Completed 2025-12-22)
-  - Status: COMPLETE - All Phase 5B tests operational
+- **Phase 5B: Full Hardening** (Started 2025-12-22, Completed 2025-12-23)
+  - Status: COMPLETE - 18/24 tests implemented (75%, 6 deferred with documented blockers)
+  - Test infrastructure additions:
+    - Added Session test helper methods (commit eb0a164) for counter overflow testing:
+      - `Session::test_set_send_nonce(u64)` - Set send nonce to test u64::MAX overflow
+      - `Session::test_set_recv_nonce(u64)` - Set receive nonce to test u64::MAX overflow
+      - `Session::test_set_key_epoch(u32)` - Set key epoch to test u32::MAX overflow
+      - Methods cfg-gated with `#[cfg(any(test, feature = "test-helpers"))]` for test-only access
+      - Comprehensive SAFETY comments documenting catastrophic nonce reuse risks per spec §6.5.1
+    - Feature flag "test-helpers" in zp-core/Cargo.toml enables cross-crate test usage
+    - Created multi-stream test infrastructure (2025-12-23):
+      - `test_helpers.rs` module (~350 lines) with reusable QUIC integration helpers
+      - Connection setup: `setup_connection_pair()` for client/server establishment
+      - Batched stream creation: `create_streams_batched()` with backpressure control
+      - Stream validation: `validate_stream_ids()` for uniqueness and parity checks
+      - Timeout protection: `with_timeout()` wrapper (10s default)
+      - 6/6 helper tests passing
+      - Demo test showing 50 concurrent streams pattern
   - Edge case testing: 10/12 tests implemented (83% complete, 2 deferred to Phase 4)
     - ✅ Frame Size Boundaries: 3/3 tests (max size, oversized, empty payload)
     - ✅ Counter Overflow: 3/3 tests (send_nonce, recv_nonce, key_epoch at u64/u32::MAX)
     - ✅ Flow Control: 3/3 tests (window=0, overflow, receive violation in zp-core unit tests)
     - 🟡 Stream Limits: 1/3 tests (rapid creation ✅, hibernation overflow deferred to Phase 4 State Token, ID exhaustion needs test API)
-  - Concurrency testing: 8/10 tests (4 ignored pending TCP transport for EncryptedRecord)
+  - Concurrency testing: 8/12 tests implemented (67% complete, 4 deferred to TCP transport)
     - ✅ Concurrent Stream Operations: 4/4 tests (1000 concurrent streams, interleaved send/recv, simultaneous creation, close race)
-    - 🟡 Encryption Concurrency: 0/3 tests (all deferred - QUIC uses native TLS 1.3, not EncryptedRecord)
-    - ✅ Connection Concurrency: 4/4 tests (100 simultaneous, concurrent connect/accept, 1000 connection stress, realistic scenarios)
+    - ⏸️ Encryption Concurrency: 0/4 tests (all deferred - QUIC uses native TLS 1.3, not EncryptedRecord - will test on TCP)
+    - ✅ Connection Concurrency: 4/4 tests (100 simultaneous, concurrent connect/accept, 1000 connection stress, pool reuse)
+  - Test helpers infrastructure:
+    - Created `test_helpers.rs` (~350 lines) with reusable QUIC integration utilities
+    - Connection setup: `setup_connection_pair()` for client/server pairs
+    - Batched stream creation: `create_streams_batched()` with configurable backpressure
+    - Stream validation: `validate_stream_ids()` for uniqueness and parity checks
+    - Timeout protection: `with_timeout()` wrapper (10s default)
+    - 6/6 helper tests passing
+  - Coverage achieved: 70% → **75%** (target range: 75-80%)
+  - Test count: 348 total tests (330 existing + 18 Phase 5B)
+  - Deferred tests: 6 total (2 blocked on Phase 4 State Token, 4 blocked on TCP transport with EncryptedRecord)
   - Concurrency enhancements:
     - Quinn config tuning: max_concurrent_bidi_streams=1000, stream_receive_window=2MB, receive_window=20MB
     - Backpressure batching: Stream/connection creation paced to prevent resource exhaustion
