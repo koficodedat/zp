@@ -35,7 +35,7 @@
 //! ```
 
 use crate::error::{Error, Result};
-use crate::traits::{InterfaceType, NetworkMonitor, NetworkPath};
+use crate::traits::{NetworkMonitor, NetworkPath};
 use std::sync::{Arc, RwLock};
 
 /// Type alias for path change callbacks.

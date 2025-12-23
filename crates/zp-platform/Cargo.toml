@@ -15,6 +15,8 @@ description = "Platform-specific integrations for the zp protocol"
 
 # Cryptography
 aes-gcm = { workspace = true }
+hkdf = { workspace = true }
+sha2 = { workspace = true }
 rand = { workspace = true }
 zeroize = { workspace = true }
 
@@ -32,6 +34,9 @@ core-foundation = "0.9"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # WASM/browser dependencies will go here
+
+[dev-dependencies]
+hex = { workspace = true }
 
 [features]
 default = []

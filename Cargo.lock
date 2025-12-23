@@ -4497,9 +4497,12 @@ version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "core-foundation 0.9.4",
+ "hex",
+ "hkdf",
  "rand 0.8.5",
  "security-framework 2.11.1",
  "security-framework-sys",
+ "sha2",
  "thiserror 1.0.69",
  "tracing",
  "zeroize",

@@ -5,20 +5,21 @@
 //! - Android: Hardware KeyStore, Foreground Services
 //! - Browser: WebCrypto, WASM bindings (security-limited per spec §1.5)
 
-#![forbid(unsafe_code)]
+// iOS platform code requires unsafe for FFI to Security.framework
+#![cfg_attr(not(target_os = "ios"), forbid(unsafe_code))]
 #![warn(missing_docs)]
 
 pub mod error;
 pub mod mock;
 pub mod traits;
 
-#[cfg(feature = "ios")]
+#[cfg(target_os = "ios")]
 pub mod ios;
 
-#[cfg(feature = "android")]
+#[cfg(target_os = "android")]
 pub mod android;
 
-#[cfg(feature = "browser")]
+#[cfg(target_arch = "wasm32")]
 pub mod browser;
 
 pub use error::{Error, Result};
