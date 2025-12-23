@@ -11,6 +11,9 @@
 //! - Stream Limits: 0/3 tests (requires connection-level testing)
 //! - Flow Control: 0/3 tests (requires flow control implementation)
 
+mod test_helpers;
+
+use test_helpers::*;
 use zp_core::frame::Frame;
 use zp_core::session::{HandshakeMode, Role, Session};
 
@@ -350,4 +353,57 @@ fn establish_test_session() -> (Session, Session) {
     assert!(server.is_established());
 
     (client, server)
+}
+
+// ============================================================================
+// Demo: Using test_helpers for Multi-Stream Testing
+// ============================================================================
+
+/// Demonstration of test_helpers usage for multi-stream scenarios.
+///
+/// This test shows how to use the helper infrastructure:
+/// - setup_connection_pair() for client/server setup
+/// - create_streams_batched() for concurrent stream creation
+/// - validate_stream_ids() for stream ID verification
+///
+/// This pattern will be used for Stream Limit tests once ready.
+#[tokio::test]
+#[ignore] // Demo test, not part of core test suite
+async fn demo_test_helpers_multi_stream() {
+    // Setup connection pair
+    let pair = setup_connection_pair().await;
+    let client_conn = pair.client;
+    let server_task = pair.server_task;
+
+    // Create 50 streams in batches of 10
+    let config = BatchConfig {
+        total_streams: 50,
+        batch_size: 10,
+        batch_delay_ms: 5,
+    };
+
+    let stream_ids = create_streams_batched(&client_conn, config).await;
+
+    // Validate stream IDs (client uses even IDs)
+    validate_stream_ids(&stream_ids, true);
+
+    // Verify all 50 streams were created
+    assert_eq!(stream_ids.len(), 50, "Should create exactly 50 streams");
+
+    // Accept streams on server side
+    let server_conn = server_task.await.expect("Server task failed");
+    let server_streams = accept_streams(&server_conn, 50).await;
+
+    // Verify server accepted all streams
+    assert_eq!(
+        server_streams.len(),
+        50,
+        "Server should accept all 50 streams"
+    );
+
+    // Server streams should have odd IDs
+    let server_stream_ids: Vec<u64> = server_streams.iter().map(|s| s.id()).collect();
+    validate_stream_ids(&server_stream_ids, false);
+
+    println!("✅ Demo: Successfully created and validated 50 concurrent streams");
 }
