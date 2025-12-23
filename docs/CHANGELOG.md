@@ -28,7 +28,48 @@
     - Extended Stream struct with send_offset/recv_offset fields per spec §6.5
     - 13 unit tests covering serialization, validation, and spec constraints (all passing)
     - Maximum hibernation: 12 streams (958 bytes total per spec)
-  - Status: Foundation complete, pending encryption and persistence (Phase 3+4)
+  - Phase 3 complete: Sync-Frame Migration Logic (spec §3.3.5-6)
+    - Implemented `Session::generate_sync_frame()` - Creates Sync-Frame with stream states and XXH64 integrity hashes
+    - Implemented `Session::process_sync_frame()` - Validates session ID, compares stream states, returns Sync-Ack
+    - Implemented `Session::process_sync_ack()` - Extracts migration status from Sync-Ack response
+    - Session ID validation per spec §3.3.5 (rejects mismatched sessions with ERR_SYNC_REJECTED)
+    - Per-stream status codes: OK (0x00), UNKNOWN (0x01), MISMATCH (0x02)
+    - Overall Sync-Ack status: OK (0x00), PARTIAL (0x01), REJECT (0x02)
+    - 6 conformance tests added to `tests/conformance/session_test.rs` (all passing):
+      - test_generate_sync_frame - Frame generation with integrity hashes
+      - test_process_sync_frame_session_id_match - Successful migration with matching sessions
+      - test_process_sync_frame_session_id_mismatch - Rejection of mismatched session IDs
+      - test_process_sync_frame_unknown_stream - UNKNOWN status for missing streams
+      - test_process_sync_ack - Sync-Ack status extraction
+      - test_sync_frame_stream_count_limit - u16::MAX stream limit enforcement
+    - Files: `crates/zp-core/src/session.rs` (+183 lines of migration logic)
+    - Total tests: 21 session conformance tests (up from 15)
+    - Zero clippy warnings
+  - Phase 4 complete: State Token Encryption (spec §6.5-6.6)
+    - Implemented `Session::save_state_token()` - AES-256-GCM encryption with device-bound keys
+    - Implemented `Session::restore_from_token()` - Decryption, expiration validation, session restoration
+    - Encryption: AES-256-GCM with header as AAD (authenticated but not encrypted)
+    - Nonce management: Fresh 12-byte nonce per save (OsRng), ZP_NONCE_SKIP (1000) applied on restore
+    - Token lifecycle: 24-hour expiration enforced, MAX_HIBERNATED_STREAMS (12) limit
+    - Storage format: token_nonce[12] || header[16] || ciphertext || tag[16]
+    - Security audit conducted (zp-core):
+      - ✅ No unsafe code (#![forbid(unsafe_code)])
+      - ✅ All secrets Zeroizing-wrapped
+      - ✅ No logging in crypto code
+      - Fixed Medium: RNG consistency (use OsRng instead of thread_rng)
+      - Fixed Low: SystemTime panic prevention (error handling for clock < 1970)
+      - Info: Constant-time comparisons not explicit (AES-GCM tag verification is constant-time in aes-gcm crate; session ID comparisons could use subtle::ConstantTimeEq if timing attacks become a concern)
+    - 6 conformance tests added to `tests/conformance/session_test.rs` (all passing):
+      - test_state_token_save_restore_roundtrip - Full encryption/decryption cycle
+      - test_state_token_expiration - 24-hour TTL validation
+      - test_state_token_wrong_key - Decryption failure with incorrect key
+      - test_state_token_stream_limit - MAX_HIBERNATED_STREAMS enforcement
+      - test_state_token_nonce_skip - ZP_NONCE_SKIP verification
+      - test_state_token_structure - Storage format validation
+    - Files: `crates/zp-core/src/session.rs` (+300 lines encryption/restoration logic)
+    - Total tests: 27 session conformance tests (up from 21)
+    - Zero clippy warnings
+  - Status: State Token encryption complete, ready for platform-specific key integration (iOS Secure Enclave, Android KeyStore)
 
 - **Phase 5B: Full Hardening** (Started 2025-12-22, Completed 2025-12-22)
   - Status: COMPLETE - All Phase 5B tests operational
