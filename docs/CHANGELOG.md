@@ -4,6 +4,8 @@
 **Covers:** RC1 through v1.0
 **Related:** [zp Specification v1.0](./zp_specification_v1.0.md) | [Test Vectors](./TEST_VECTORS.md)
 
+**Important:** See [KNOWN_TEST_FAILURES.md](../KNOWN_TEST_FAILURES.md) for expected test failures and resolutions.
+
 ---
 
 ## Implementation Changelog
