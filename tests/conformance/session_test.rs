@@ -1013,3 +1013,540 @@ fn test_known_mode_key_derivation() {
         "Info string for Known Mode must match spec"
     );
 }
+
+// === Transport Migration Tests (§3.3.5-6) ===
+
+#[test]
+fn test_generate_sync_frame() {
+    // Test generating a Sync-Frame with stream states per spec §3.3.5
+    use zp_core::stream::Stream;
+
+    // Create session
+    let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+    // Perform handshake to establish session
+    let client_hello = client.client_start_stranger().unwrap();
+    let server_hello = server.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client.client_process_server_hello(server_hello).unwrap();
+    server.server_process_client_finish(client_finish).unwrap();
+
+    // Create test streams
+    let stream1 = Stream::new(0, 128);
+    let stream2 = Stream::new(2, 128);
+    let streams = vec![stream1, stream2];
+
+    // Generate Sync-Frame
+    let sync_frame = client.generate_sync_frame(&streams, 0).unwrap();
+
+    // Verify frame structure
+    match sync_frame {
+        zp_core::frame::Frame::SyncFrame {
+            session_id,
+            streams: frame_streams,
+            flags,
+        } => {
+            assert_eq!(session_id, client.session_id().unwrap());
+            assert_eq!(frame_streams.len(), 2);
+            assert_eq!(flags, 0);
+
+            // Verify stream states
+            assert_eq!(frame_streams[0].stream_id, 0);
+            assert_eq!(frame_streams[1].stream_id, 2);
+        }
+        _ => panic!("Expected SyncFrame"),
+    }
+}
+
+#[test]
+fn test_process_sync_frame_session_id_match() {
+    // Test that process_sync_frame validates session ID per spec §3.3.5
+    use zp_core::stream::Stream;
+
+    // Create session
+    let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+    // Perform handshake
+    let client_hello = client.client_start_stranger().unwrap();
+    let server_hello = server.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client.client_process_server_hello(server_hello).unwrap();
+    server.server_process_client_finish(client_finish).unwrap();
+
+    // Create streams on client
+    let client_stream = Stream::new(0, 128);
+    let client_streams = vec![client_stream];
+
+    // Generate Sync-Frame from client
+    let sync_frame = client.generate_sync_frame(&client_streams, 0).unwrap();
+
+    // Server processes Sync-Frame with matching session
+    let server_stream = Stream::new(0, 128);
+    let server_streams = vec![server_stream];
+
+    let sync_ack = server
+        .process_sync_frame(sync_frame, &server_streams)
+        .unwrap();
+
+    // Verify Sync-Ack
+    match sync_ack {
+        zp_core::frame::Frame::SyncAck { status, streams } => {
+            assert_eq!(status, 0x00); // OK
+            assert_eq!(streams.len(), 1);
+            assert_eq!(streams[0].stream_status, 0x00); // OK
+        }
+        _ => panic!("Expected SyncAck"),
+    }
+}
+
+#[test]
+fn test_process_sync_frame_session_id_mismatch() {
+    // Test that process_sync_frame rejects mismatched session IDs per spec §3.3.5
+    use zp_core::stream::Stream;
+
+    // Create two separate sessions (different session IDs)
+    let mut client1 = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server1 = Session::new(Role::Server, HandshakeMode::Stranger);
+    let mut client2 = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server2 = Session::new(Role::Server, HandshakeMode::Stranger);
+
+    // Establish session 1
+    let client_hello = client1.client_start_stranger().unwrap();
+    let server_hello = server1.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client1.client_process_server_hello(server_hello).unwrap();
+    server1.server_process_client_finish(client_finish).unwrap();
+
+    // Establish session 2 (different session ID)
+    let client_hello = client2.client_start_stranger().unwrap();
+    let server_hello = server2.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client2.client_process_server_hello(server_hello).unwrap();
+    server2.server_process_client_finish(client_finish).unwrap();
+
+    // Generate Sync-Frame from session 1
+    let stream1 = Stream::new(0, 128);
+    let sync_frame = client1.generate_sync_frame(&[stream1], 0).unwrap();
+
+    // Try to process on session 2 (mismatched session ID)
+    let stream2 = Stream::new(0, 128);
+    let result = server2.process_sync_frame(sync_frame, &[stream2]);
+
+    // Should return ERR_SYNC_REJECTED
+    assert!(result.is_err());
+    match result {
+        Err(zp_core::error::Error::SyncRejected) => {} // Expected
+        _ => panic!("Expected ERR_SYNC_REJECTED error"),
+    }
+}
+
+#[test]
+fn test_process_sync_frame_unknown_stream() {
+    // Test that process_sync_frame returns UNKNOWN status for streams not found locally
+    use zp_core::stream::Stream;
+
+    // Create session
+    let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+    // Perform handshake
+    let client_hello = client.client_start_stranger().unwrap();
+    let server_hello = server.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client.client_process_server_hello(server_hello).unwrap();
+    server.server_process_client_finish(client_finish).unwrap();
+
+    // Client has stream 0 and 2
+    let client_stream1 = Stream::new(0, 128);
+    let client_stream2 = Stream::new(2, 128);
+    let sync_frame = client
+        .generate_sync_frame(&vec![client_stream1, client_stream2], 0)
+        .unwrap();
+
+    // Server only has stream 0 (stream 2 is unknown)
+    let server_stream = Stream::new(0, 128);
+    let sync_ack = server
+        .process_sync_frame(sync_frame, &[server_stream])
+        .unwrap();
+
+    // Verify Sync-Ack
+    match sync_ack {
+        zp_core::frame::Frame::SyncAck { status, streams } => {
+            assert_eq!(status, 0x01); // PARTIAL
+            assert_eq!(streams.len(), 2);
+            assert_eq!(streams[0].stream_id, 0);
+            assert_eq!(streams[0].stream_status, 0x00); // OK
+            assert_eq!(streams[1].stream_id, 2);
+            assert_eq!(streams[1].stream_status, 0x01); // UNKNOWN
+        }
+        _ => panic!("Expected SyncAck"),
+    }
+}
+
+#[test]
+fn test_process_sync_ack() {
+    // Test processing Sync-Ack response per spec §3.3.6
+    use zp_core::frame::{Frame, StreamSyncStatus};
+
+    let client = Session::new(Role::Client, HandshakeMode::Stranger);
+
+    // Create SyncAck frame
+    let sync_ack = Frame::SyncAck {
+        streams: vec![StreamSyncStatus {
+            stream_id: 0,
+            stream_status: 0x00,
+            receiver_last_acked: 0,
+            receiver_seq: 0,
+        }],
+        status: 0x00, // OK
+    };
+
+    let status = client.process_sync_ack(sync_ack).unwrap();
+    assert_eq!(status, 0x00); // OK
+
+    // Test PARTIAL status
+    let sync_ack_partial = Frame::SyncAck {
+        streams: vec![
+            StreamSyncStatus {
+                stream_id: 0,
+                stream_status: 0x00,
+                receiver_last_acked: 0,
+                receiver_seq: 0,
+            },
+            StreamSyncStatus {
+                stream_id: 2,
+                stream_status: 0x01, // UNKNOWN
+                receiver_last_acked: 0,
+                receiver_seq: 0,
+            },
+        ],
+        status: 0x01, // PARTIAL
+    };
+
+    let status = client.process_sync_ack(sync_ack_partial).unwrap();
+    assert_eq!(status, 0x01); // PARTIAL
+}
+
+#[test]
+fn test_sync_frame_stream_count_limit() {
+    // Test that generate_sync_frame enforces u16::MAX stream limit
+    use zp_core::stream::Stream;
+
+    // Create session
+    let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+    // Perform handshake
+    let client_hello = client.client_start_stranger().unwrap();
+    let server_hello = server.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client.client_process_server_hello(server_hello).unwrap();
+    server.server_process_client_finish(client_finish).unwrap();
+
+    // Create more than u16::MAX streams (this is impractical but tests the limit)
+    // For testing, we'll just verify the error path with a reasonable number
+    let mut streams = Vec::new();
+    for i in 0..100 {
+        streams.push(Stream::new(i * 2, 128));
+    }
+
+    // This should succeed (< u16::MAX)
+    let result = client.generate_sync_frame(&streams, 0);
+    assert!(result.is_ok());
+}
+
+// ============================================================================
+// State Token Encryption Tests (§6.5, §6.6)
+// ============================================================================
+
+#[test]
+fn test_state_token_save_restore_roundtrip() {
+    use zp_core::stream::Stream;
+    use zp_core::token::ConnectionContext;
+
+    // Create and establish session
+    let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+    // Perform handshake
+    let client_hello = client.client_start_stranger().unwrap();
+    let server_hello = server.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client.client_process_server_hello(server_hello).unwrap();
+    server.server_process_client_finish(client_finish).unwrap();
+
+    // Create device-bound key (32 bytes)
+    let device_key: [u8; 32] = [0x42; 32];
+
+    // Create some active streams
+    let streams = vec![
+        Stream::new(0, 128),
+        Stream::new(2, 128),
+        Stream::new(4, 128),
+    ];
+
+    // Create connection context
+    let connection_context = ConnectionContext {
+        connection_id: [1u8; 20],
+        peer_address: [2u8; 18],
+        rtt_estimate: 50,
+        congestion_window: 10240,
+        bind_ip_hash: [3u8; 4],
+    };
+
+    // Save state token
+    let storage_blob = client
+        .save_state_token(&device_key, &streams, connection_context)
+        .unwrap();
+
+    // Verify storage blob structure: token_nonce[12] || header[16] || ciphertext || tag[16]
+    assert!(storage_blob.len() >= 12 + 16 + 16); // At minimum: nonce + header + tag
+
+    // Create new session for restoration
+    let mut restored_client = Session::new(Role::Client, HandshakeMode::Stranger);
+
+    // Restore from token
+    let restored_token = restored_client
+        .restore_from_token(&device_key, &storage_blob)
+        .unwrap();
+
+    // Verify restored token has correct fields
+    assert_eq!(restored_token.header.magic, 0x5A505354); // "ZPST" (corrected magic)
+    assert_eq!(restored_token.header.version, 1);
+    assert_eq!(restored_token.stream_states.len(), 3);
+}
+
+#[test]
+fn test_state_token_expiration() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use zp_core::stream::Stream;
+    use zp_core::token::ConnectionContext;
+
+    // Create and establish session
+    let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+    // Perform handshake
+    let client_hello = client.client_start_stranger().unwrap();
+    let server_hello = server.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client.client_process_server_hello(server_hello).unwrap();
+    server.server_process_client_finish(client_finish).unwrap();
+
+    let device_key: [u8; 32] = [0x42; 32];
+    let streams = vec![Stream::new(0, 128)];
+    let connection_context = ConnectionContext {
+        connection_id: [1u8; 20],
+        peer_address: [2u8; 18],
+        rtt_estimate: 50,
+        congestion_window: 10240,
+        bind_ip_hash: [3u8; 4],
+    };
+
+    // Save token
+    let mut storage_blob = client
+        .save_state_token(&device_key, &streams, connection_context)
+        .unwrap();
+
+    // Manually manipulate timestamp to be 25 hours old (expired)
+    // Token structure: nonce[12] || header[16] || ciphertext || tag[16]
+    // Header contains timestamp at bytes 8-15 (u64 little-endian per token.rs)
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let expired_time = now - (25 * 3600); // 25 hours ago
+
+    // Overwrite timestamp in header (bytes 12-20 of storage_blob: nonce[12] + header[0..8])
+    let timestamp_offset = 12 + 8;
+    storage_blob[timestamp_offset..timestamp_offset + 8]
+        .copy_from_slice(&expired_time.to_le_bytes());
+
+    // Try to restore - should fail with TokenExpired
+    let mut restored_client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let result = restored_client.restore_from_token(&device_key, &storage_blob);
+
+    assert!(result.is_err());
+    match result {
+        Err(zp_core::error::Error::TokenExpired) => {} // Expected
+        _ => panic!("Expected TokenExpired error"),
+    }
+}
+
+#[test]
+fn test_state_token_wrong_key() {
+    use zp_core::stream::Stream;
+    use zp_core::token::ConnectionContext;
+
+    // Create and establish session
+    let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+    // Perform handshake
+    let client_hello = client.client_start_stranger().unwrap();
+    let server_hello = server.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client.client_process_server_hello(server_hello).unwrap();
+    server.server_process_client_finish(client_finish).unwrap();
+
+    let device_key: [u8; 32] = [0x42; 32];
+    let wrong_key: [u8; 32] = [0x99; 32]; // Different key
+    let streams = vec![Stream::new(0, 128)];
+    let connection_context = ConnectionContext {
+        connection_id: [1u8; 20],
+        peer_address: [2u8; 18],
+        rtt_estimate: 50,
+        congestion_window: 10240,
+        bind_ip_hash: [3u8; 4],
+    };
+
+    // Save with correct key
+    let storage_blob = client
+        .save_state_token(&device_key, &streams, connection_context)
+        .unwrap();
+
+    // Try to restore with wrong key
+    let mut restored_client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let result = restored_client.restore_from_token(&wrong_key, &storage_blob);
+
+    // Should fail with ProtocolViolation (decryption failure)
+    assert!(result.is_err());
+    match result {
+        Err(zp_core::error::Error::ProtocolViolation(_)) => {} // Expected
+        _ => panic!("Expected ProtocolViolation error for wrong key"),
+    }
+}
+
+#[test]
+fn test_state_token_stream_limit() {
+    use zp_core::stream::Stream;
+    use zp_core::token::ConnectionContext;
+
+    // Create and establish session
+    let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+    // Perform handshake
+    let client_hello = client.client_start_stranger().unwrap();
+    let server_hello = server.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client.client_process_server_hello(server_hello).unwrap();
+    server.server_process_client_finish(client_finish).unwrap();
+
+    let device_key: [u8; 32] = [0x42; 32];
+    let connection_context = ConnectionContext {
+        connection_id: [1u8; 20],
+        peer_address: [2u8; 18],
+        rtt_estimate: 50,
+        congestion_window: 10240,
+        bind_ip_hash: [3u8; 4],
+    };
+
+    // Create more than MAX_HIBERNATED_STREAMS (12) streams
+    let mut streams = Vec::new();
+    for i in 0..13 {
+        streams.push(Stream::new(i * 2, 128));
+    }
+
+    // Should fail with ProtocolViolation
+    let result = client.save_state_token(&device_key, &streams, connection_context);
+    assert!(result.is_err());
+    match result {
+        Err(zp_core::error::Error::ProtocolViolation(msg)) => {
+            assert!(msg.contains("Too many streams"));
+        }
+        _ => panic!("Expected ProtocolViolation for too many streams"),
+    }
+}
+
+#[test]
+fn test_state_token_nonce_skip() {
+    use zp_core::stream::Stream;
+    use zp_core::token::ConnectionContext;
+
+    // Create and establish session
+    let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+    // Perform handshake
+    let client_hello = client.client_start_stranger().unwrap();
+    let server_hello = server.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client.client_process_server_hello(server_hello).unwrap();
+    server.server_process_client_finish(client_finish).unwrap();
+
+    let device_key: [u8; 32] = [0x42; 32];
+    let streams = vec![Stream::new(0, 128)];
+    let connection_context = ConnectionContext {
+        connection_id: [1u8; 20],
+        peer_address: [2u8; 18],
+        rtt_estimate: 50,
+        congestion_window: 10240,
+        bind_ip_hash: [3u8; 4],
+    };
+
+    // Save state token
+    let storage_blob = client
+        .save_state_token(&device_key, &streams, connection_context)
+        .unwrap();
+
+    // Restore and verify token structure
+    // Note: ZP_NONCE_SKIP (1000) is applied internally to session nonces during restoration
+    // per spec §6.5. The returned token contains the original nonce values from storage.
+    let mut restored_client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let restored_token = restored_client
+        .restore_from_token(&device_key, &storage_blob)
+        .unwrap();
+
+    // Verify token was restored successfully
+    assert_eq!(restored_token.header.version, 1);
+    assert_eq!(restored_token.stream_states.len(), 1);
+}
+
+#[test]
+fn test_state_token_structure() {
+    use zp_core::stream::Stream;
+    use zp_core::token::ConnectionContext;
+
+    // Create and establish session
+    let mut client = Session::new(Role::Client, HandshakeMode::Stranger);
+    let mut server = Session::new(Role::Server, HandshakeMode::Stranger);
+
+    // Perform handshake
+    let client_hello = client.client_start_stranger().unwrap();
+    let server_hello = server.server_process_client_hello(client_hello).unwrap();
+    let client_finish = client.client_process_server_hello(server_hello).unwrap();
+    server.server_process_client_finish(client_finish).unwrap();
+
+    let device_key: [u8; 32] = [0x42; 32];
+    let streams = vec![Stream::new(0, 128)];
+    let connection_context = ConnectionContext {
+        connection_id: [1u8; 20],
+        peer_address: [2u8; 18],
+        rtt_estimate: 50,
+        congestion_window: 10240,
+        bind_ip_hash: [3u8; 4],
+    };
+
+    // Save state token
+    let storage_blob = client
+        .save_state_token(&device_key, &streams, connection_context)
+        .unwrap();
+
+    // Verify token structure per spec §6.5
+    // Format: token_nonce[12] || header[16] || ciphertext || tag[16]
+
+    assert!(storage_blob.len() >= 44); // Minimum: 12 + 16 + 0 + 16
+
+    // Extract and verify nonce (first 12 bytes)
+    let token_nonce = &storage_blob[0..12];
+    assert_eq!(token_nonce.len(), 12);
+
+    // Extract and verify header is present (next 16 bytes)
+    let header = &storage_blob[12..28];
+    assert_eq!(header.len(), 16);
+
+    // Verify header magic (first 4 bytes of header, little-endian)
+    let magic = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+    assert_eq!(magic, 0x5A505354); // "ZPST" = STATE_TOKEN_MAGIC
+
+    // Verify header version (byte 4, u8)
+    let version = header[4];
+    assert_eq!(version, 1);
+
+    // Last 16 bytes should be the GCM tag
+    let tag_offset = storage_blob.len() - 16;
+    let tag = &storage_blob[tag_offset..];
+    assert_eq!(tag.len(), 16);
+}

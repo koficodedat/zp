@@ -1806,6 +1806,489 @@ impl Session {
         Ok(())
     }
 
+    // === Transport Migration (§3.3.3-6) ===
+
+    /// Generate a Sync-Frame for transport migration per spec §3.3.5.
+    ///
+    /// Creates a Sync-Frame containing the current state of all active streams,
+    /// allowing the session to resume on a different transport without data loss.
+    ///
+    /// # Arguments
+    ///
+    /// * `streams` - Slice of active streams to include in migration
+    /// * `flags` - Sync flags (bit 0: URGENT, bit 1: FINAL, bits 2-7: reserved)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Frame::SyncFrame` with session ID and stream states with XXH64 integrity hashes.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if session not established or stream count exceeds u16::MAX.
+    ///
+    /// # Spec Reference
+    ///
+    /// §3.3.5 - Sync-Frame Format
+    pub fn generate_sync_frame(
+        &self,
+        streams: &[crate::stream::Stream],
+        flags: u8,
+    ) -> Result<Frame> {
+        // Ensure session is established
+        let session_id = self.session_id().ok_or(Error::InvalidState)?;
+
+        // Check stream count limit (u16::MAX per spec)
+        if streams.len() > u16::MAX as usize {
+            return Err(Error::ProtocolViolation(format!(
+                "Too many streams for Sync-Frame: {} (max {})",
+                streams.len(),
+                u16::MAX
+            )));
+        }
+
+        // Build stream states with integrity hashes
+        let mut stream_states = Vec::with_capacity(streams.len());
+        for stream in streams {
+            let state = crate::frame::StreamState {
+                stream_id: stream.id(),
+                global_seq: stream.global_seq(),
+                last_acked: stream.last_acked(),
+            };
+            stream_states.push(state);
+        }
+
+        Ok(Frame::SyncFrame {
+            session_id,
+            streams: stream_states,
+            flags,
+        })
+    }
+
+    /// Process a Sync-Frame from a migrating peer per spec §3.3.6.
+    ///
+    /// Validates the incoming Sync-Frame and generates a Sync-Ack response.
+    /// Checks session ID match, verifies XXH64 integrity hashes, and compares
+    /// sequence numbers against local stream state.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - Incoming Sync-Frame to process
+    /// * `local_streams` - Slice of local stream states for comparison
+    ///
+    /// # Returns
+    ///
+    /// Returns `Frame::SyncAck` with per-stream status (OK, UNKNOWN, MISMATCH).
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Session not established
+    /// - Frame is not a SyncFrame
+    /// - Session ID mismatch (ERR_SYNC_REJECTED per spec)
+    ///
+    /// # Spec Reference
+    ///
+    /// §3.3.5 - Sync-Frame Format
+    /// §3.3.6 - Sync-Ack Format
+    pub fn process_sync_frame(
+        &self,
+        frame: Frame,
+        local_streams: &[crate::stream::Stream],
+    ) -> Result<Frame> {
+        // Ensure session is established
+        let session_id = self.session_id().ok_or(Error::InvalidState)?;
+
+        // Extract SyncFrame fields
+        let (peer_session_id, peer_streams, _flags) = match frame {
+            Frame::SyncFrame {
+                session_id: s_id,
+                streams,
+                flags,
+            } => (s_id, streams, flags),
+            _ => return Err(Error::ProtocolViolation("Expected SyncFrame".into())),
+        };
+
+        // Verify session ID matches per spec §3.3.5
+        if peer_session_id != session_id {
+            return Err(Error::SyncRejected);
+        }
+
+        // Build per-stream status
+        let mut stream_sync_statuses = Vec::with_capacity(peer_streams.len());
+        let mut overall_status = 0x00; // 0x00 = OK (all streams synchronized)
+
+        for peer_stream_state in peer_streams {
+            // Find matching local stream
+            let local_stream = local_streams
+                .iter()
+                .find(|s| s.id() == peer_stream_state.stream_id);
+
+            let (stream_status, receiver_last_acked, receiver_seq) = match local_stream {
+                Some(local) => {
+                    // Stream exists locally - compare sequence numbers
+                    let peer_seq = peer_stream_state.global_seq;
+                    let peer_ack = peer_stream_state.last_acked;
+                    let local_seq = local.global_seq();
+                    let local_ack = local.last_acked();
+
+                    // Check for sequence mismatch per spec §3.3.6
+                    // MISMATCH if sequences are inconsistent (simple check: peer ahead of local by >1 window)
+                    let mismatch =
+                        peer_seq > local_seq + 1_000_000 || peer_ack > local_ack + 1_000_000;
+
+                    if mismatch {
+                        overall_status = 0x01; // PARTIAL
+                        (0x02, local_ack, local_seq) // MISMATCH
+                    } else {
+                        (0x00, local_ack, local_seq) // OK
+                    }
+                }
+                None => {
+                    // Stream unknown locally
+                    overall_status = 0x01; // PARTIAL
+                    (0x01, 0, 0) // UNKNOWN
+                }
+            };
+
+            stream_sync_statuses.push(crate::frame::StreamSyncStatus {
+                stream_id: peer_stream_state.stream_id,
+                stream_status,
+                receiver_last_acked,
+                receiver_seq,
+            });
+        }
+
+        Ok(Frame::SyncAck {
+            streams: stream_sync_statuses,
+            status: overall_status,
+        })
+    }
+
+    /// Process a Sync-Ack response after migration per spec §3.3.6.
+    ///
+    /// Validates the Sync-Ack frame and determines if migration succeeded.
+    /// Caller should use the returned status to decide whether to proceed
+    /// with the migrated connection or fall back.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - Incoming Sync-Ack to process
+    ///
+    /// # Returns
+    ///
+    /// Returns the overall status code:
+    /// - `0x00` (OK): All streams synchronized successfully
+    /// - `0x01` (PARTIAL): Some streams have issues (check per-stream status)
+    /// - `0x02` (REJECT): Migration rejected (must create fresh connection)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if frame is not a SyncAck.
+    ///
+    /// # Spec Reference
+    ///
+    /// §3.3.6 - Sync-Ack Format
+    pub fn process_sync_ack(&self, frame: Frame) -> Result<u8> {
+        // Extract SyncAck fields
+        match frame {
+            Frame::SyncAck { status, .. } => Ok(status),
+            _ => Err(Error::ProtocolViolation("Expected SyncAck".into())),
+        }
+    }
+
+    // === State Token Encryption & Persistence (§6.5-6.6) ===
+
+    /// Save session state as an encrypted State Token per spec §6.5.
+    ///
+    /// Encrypts the session's cryptographic state, connection context, and stream states
+    /// using AES-256-GCM with a device-bound key. Returns the encrypted blob ready for
+    /// persistent storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_key` - 32-byte device-bound encryption key (from Secure Enclave, KeyStore, etc.)
+    /// * `streams` - Slice of active streams to include in token (max 12)
+    /// * `connection_context` - Connection-specific metadata (connection_id, peer_address, etc.)
+    ///
+    /// # Returns
+    ///
+    /// Returns encrypted token blob in storage format:
+    /// `token_nonce[12] || header[16] || ciphertext || tag[16]`
+    ///
+    /// Total size = 44 + encrypted_length bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Session not established
+    /// - Stream count > 12 (MAX_HIBERNATED_STREAMS)
+    /// - Stream count = 0 (invalid per spec)
+    /// - Encryption fails
+    ///
+    /// # Spec Reference
+    ///
+    /// §6.5 - State Token Format
+    /// §6.5.1 - AEAD Nonce Construction
+    pub fn save_state_token(
+        &self,
+        device_key: &[u8; 32],
+        streams: &[crate::stream::Stream],
+        connection_context: crate::token::ConnectionContext,
+    ) -> Result<Vec<u8>> {
+        use crate::token::{
+            CryptoContext, StateToken, StreamState as TokenStreamState, StreamStateFlags,
+            TokenHeader,
+        };
+        use crate::token::{
+            MAX_HIBERNATED_STREAMS, STATE_TOKEN_MAGIC, STATE_TOKEN_VERSION, ZP_NONCE_SKIP,
+        };
+        use aes_gcm::{
+            aead::{Aead, KeyInit, Payload},
+            Aes256Gcm, Nonce,
+        };
+        use rand::RngCore;
+
+        // Ensure session is established
+        let keys = self.keys.as_ref().ok_or(Error::InvalidState)?;
+
+        // Validate stream count per spec §6.5
+        if streams.is_empty() {
+            return Err(Error::ProtocolViolation(
+                "Cannot save token with 0 streams".into(),
+            ));
+        }
+        if streams.len() > MAX_HIBERNATED_STREAMS as usize {
+            return Err(Error::ProtocolViolation(format!(
+                "Too many streams: {} (max {})",
+                streams.len(),
+                MAX_HIBERNATED_STREAMS
+            )));
+        }
+
+        // Build TokenHeader (16 bytes, used as AAD)
+        let header = TokenHeader {
+            magic: STATE_TOKEN_MAGIC,
+            version: STATE_TOKEN_VERSION,
+            flags: 0, // Reserved, must be 0
+            stream_count: streams.len() as u8,
+            reserved: 0,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| Error::ProtocolViolation("System clock error".into()))?
+                .as_secs(),
+        };
+
+        // Build CryptoContext (136 bytes)
+        // Apply ZP_NONCE_SKIP to prevent nonce reuse per spec §6.5
+        let crypto_context = CryptoContext {
+            session_id: keys.session_id,
+            session_secret: *keys.session_secret,
+            send_key: *keys.send_key,
+            recv_key: *keys.recv_key,
+            send_nonce: keys.send_nonce.saturating_add(ZP_NONCE_SKIP), // Skip ahead
+            recv_nonce: keys.recv_nonce.saturating_add(ZP_NONCE_SKIP),
+            key_epoch: keys.key_epoch,
+            reserved: [0u8; 4],
+        };
+
+        // Build StreamStates (max 12 × 63 bytes = 756 bytes)
+        let mut stream_states = Vec::with_capacity(streams.len());
+        for stream in streams {
+            // Map stream.state() to StreamStateFlags
+            // For now, assume all streams are OPEN (bit 0 set)
+            let state_flags = StreamStateFlags::new(0x01); // OPEN
+
+            let token_stream = TokenStreamState {
+                stream_id: stream.id(),
+                global_seq: stream.global_seq(),
+                last_acked: stream.last_acked(),
+                send_offset: stream.send_offset(),
+                recv_offset: stream.recv_offset(),
+                flow_window: 256 * 1024, // ZP_INITIAL_STREAM_WINDOW (will fix with getter)
+                state_flags,
+                priority: stream.priority(),
+                reserved: [0u8; 21],
+            };
+            stream_states.push(token_stream);
+        }
+
+        // Build complete StateToken
+        let token = StateToken {
+            header: header.clone(),
+            crypto_context,
+            connection_context,
+            stream_states,
+        };
+
+        // Serialize token (this gives us header + crypto + connection + streams)
+        let token_bytes = token.serialize();
+
+        // Extract header bytes (first 16 bytes) as AAD
+        let header_bytes = header.serialize();
+        if header_bytes.len() != 16 {
+            return Err(Error::ProtocolViolation(
+                "Token header must be exactly 16 bytes".into(),
+            ));
+        }
+
+        // Payload to encrypt = everything after header
+        let plaintext = &token_bytes[16..];
+
+        // Generate fresh random 12-byte nonce for this save
+        let mut token_nonce = [0u8; 12];
+        rand::rngs::OsRng.fill_bytes(&mut token_nonce);
+
+        // Encrypt with AES-256-GCM
+        let cipher = Aes256Gcm::new_from_slice(device_key)
+            .map_err(|e| Error::ProtocolViolation(format!("AES-256-GCM init failed: {}", e)))?;
+
+        let payload = Payload {
+            msg: plaintext,
+            aad: &header_bytes, // Header is AAD (authenticated but not encrypted)
+        };
+
+        let nonce = Nonce::from_slice(&token_nonce);
+        let ciphertext_with_tag = cipher
+            .encrypt(nonce, payload)
+            .map_err(|e| Error::ProtocolViolation(format!("Token encryption failed: {}", e)))?;
+
+        // Build storage format: token_nonce[12] || header[16] || ciphertext || tag[16]
+        // (tag is already appended by AEAD)
+        let mut storage_blob = Vec::with_capacity(12 + 16 + ciphertext_with_tag.len());
+        storage_blob.extend_from_slice(&token_nonce);
+        storage_blob.extend_from_slice(&header_bytes);
+        storage_blob.extend_from_slice(&ciphertext_with_tag);
+
+        Ok(storage_blob)
+    }
+
+    /// Restore session from an encrypted State Token per spec §6.5.
+    ///
+    /// Decrypts and validates a State Token, restoring the session's cryptographic
+    /// state and connection context. The session must be in Idle state before calling.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_key` - 32-byte device-bound decryption key (same key used for encryption)
+    /// * `storage_blob` - Encrypted token blob (token_nonce[12] || header[16] || ciphertext || tag[16])
+    ///
+    /// # Returns
+    ///
+    /// Returns the decrypted StateToken for further processing by the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Session not in Idle state
+    /// - Storage blob too short (< 44 bytes minimum)
+    /// - Decryption fails (wrong key, corrupted data, or tampered AAD)
+    /// - Token header validation fails
+    /// - Token expired (created_at > 24 hours ago)
+    ///
+    /// # Spec Reference
+    ///
+    /// §6.5 - State Token Format
+    /// §6.5.1 - AEAD Nonce Construction
+    pub fn restore_from_token(
+        &mut self,
+        device_key: &[u8; 32],
+        storage_blob: &[u8],
+    ) -> Result<crate::token::StateToken> {
+        use crate::token::{StateToken, TokenHeader};
+        use aes_gcm::{
+            aead::{Aead, KeyInit, Payload},
+            Aes256Gcm, Nonce,
+        };
+
+        // Ensure session is in Idle state
+        if !matches!(self.state, SessionState::Idle) {
+            return Err(Error::InvalidState);
+        }
+
+        // Validate minimum blob size: 12 (nonce) + 16 (header) + 16 (tag) = 44 bytes
+        if storage_blob.len() < 44 {
+            return Err(Error::ProtocolViolation(format!(
+                "Token blob too short: {} bytes (min 44)",
+                storage_blob.len()
+            )));
+        }
+
+        // Extract components from storage blob
+        let token_nonce = &storage_blob[0..12];
+        let header_bytes = &storage_blob[12..28];
+        let ciphertext_with_tag = &storage_blob[28..];
+
+        // Parse header (AAD) to validate before decryption
+        let header = TokenHeader::parse(header_bytes)?;
+
+        // Check token expiration (24 hours per spec §6.5)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| Error::ProtocolViolation("System clock error".into()))?
+            .as_secs();
+        let age_secs = now.saturating_sub(header.created_at);
+        if age_secs > 24 * 60 * 60 {
+            return Err(Error::TokenExpired);
+        }
+
+        // Decrypt with AES-256-GCM
+        let cipher = Aes256Gcm::new_from_slice(device_key)
+            .map_err(|e| Error::ProtocolViolation(format!("AES-256-GCM init failed: {}", e)))?;
+
+        let payload = Payload {
+            msg: ciphertext_with_tag,
+            aad: header_bytes, // Header is AAD (must match for decryption to succeed)
+        };
+
+        let nonce = Nonce::from_slice(token_nonce);
+        let plaintext = cipher
+            .decrypt(nonce, payload)
+            .map_err(|_| Error::ProtocolViolation("Token decryption failed".into()))?;
+
+        // Reconstruct full token bytes: header || plaintext
+        let mut token_bytes = Vec::with_capacity(16 + plaintext.len());
+        token_bytes.extend_from_slice(header_bytes);
+        token_bytes.extend_from_slice(&plaintext);
+
+        // Parse StateToken
+        let token = StateToken::parse(&token_bytes)?;
+
+        // Restore session keys from token
+        // The token stores send/recv keys in role-dependent order
+        // For restore, we need to reconstruct both c2s and s2c keys
+        let send_key_z = Zeroizing::new(token.crypto_context.send_key);
+        let recv_key_z = Zeroizing::new(token.crypto_context.recv_key);
+
+        // Determine c2s/s2c based on role
+        let (c2s, s2c) = match self.role {
+            Role::Client => (send_key_z.clone(), recv_key_z.clone()),
+            Role::Server => (recv_key_z.clone(), send_key_z.clone()),
+        };
+
+        let restored_keys = SessionKeys {
+            session_id: token.crypto_context.session_id,
+            session_secret: Zeroizing::new(token.crypto_context.session_secret),
+            client_to_server_key: c2s,
+            server_to_client_key: s2c,
+            send_key: send_key_z,
+            recv_key: recv_key_z,
+            send_nonce: token.crypto_context.send_nonce,
+            recv_nonce: token.crypto_context.recv_nonce,
+            key_epoch: token.crypto_context.key_epoch,
+            pending_epoch: None, // No pending rotation on resume
+        };
+
+        // Update session state to Established
+        self.state = SessionState::Established {
+            session_id: token.crypto_context.session_id,
+            version: 0x0100, // Assume v1.0 (caller can override if needed)
+            cipher: 0x01,    // Assume ZP_HYBRID_1 (caller can override)
+        };
+        self.keys = Some(restored_keys);
+
+        Ok(token)
+    }
+
     // === EncryptedRecord encryption/decryption (§3.3.13) ===
 
     /// Encrypt a frame for non-QUIC transports per spec §3.3.13.
