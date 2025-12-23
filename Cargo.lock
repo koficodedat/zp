@@ -4431,6 +4431,7 @@ dependencies = [
  "zeroize",
  "zp-core",
  "zp-crypto",
+ "zp-platform",
  "zp-transport",
 ]
 
@@ -4451,6 +4452,7 @@ dependencies = [
  "twox-hash",
  "zeroize",
  "zp-crypto",
+ "zp-platform",
 ]
 
 [[package]]
@@ -4493,11 +4495,14 @@ dependencies = [
 name = "zp-platform"
 version = "1.0.0"
 dependencies = [
+ "aes-gcm",
+ "core-foundation 0.9.4",
+ "rand 0.8.5",
+ "security-framework 2.11.1",
+ "security-framework-sys",
  "thiserror 1.0.69",
  "tracing",
- "zp-core",
- "zp-crypto",
- "zp-transport",
+ "zeroize",
 ]
 
 [[package]]
